@@ -1,7 +1,8 @@
 NNTransitionSegmentor
 ======
 NNTransitionSegmentor is a package for Word Segmentation using neural networks based on package [LibN3L](https://github.com/SUTDNLP/LibN3L). 
-The current version is a re-implementation of segmentor in ZPar
+The current version is a re-implementation of segmentor in ZPar.  
+What is the transition-based framework with beam-search decoding? Please see our ACL2014 tutorial: [Syntactic Processing Using Global Discriminative Learning and Beam-Search Decoding](http://ir.hit.edu.cn/~mszhang/yue&meishan&ting[T8].pdf) 
 
 Performance
 ======
