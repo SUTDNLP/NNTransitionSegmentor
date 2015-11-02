@@ -6,7 +6,7 @@ The current version is a re-implementation of segmentor in ZPar
 Performance
 ======
 Take averaged perceptron as an example (CTB6.0, please refer to [LibN3L: A lightweight Package for Neural NLP](https://github.com/SUTDNLP/LibN3L/blob/master/description\(expect%20for%20lrec2016\).pdf) for details):  
-Both ZPar and this package obtain performance about 95.10%
+Both ZPar and this package obtain performance about 95.08%
 
 Compile
 ======
