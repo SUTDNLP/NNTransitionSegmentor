@@ -16,6 +16,7 @@ Compile
 `cmake .`  
 `make`  
 
-Input data format:   
+Input data format 
+======
 one line one sentene, with words seperated by spaces  
 
