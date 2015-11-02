@@ -18,5 +18,5 @@ Compile
 
 Input data format 
 ======
-one line one sentene, with words seperated by spaces  
+one line one sentence, with words seperated by spaces  
 
