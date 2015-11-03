@@ -269,7 +269,7 @@ void Segmentor::train(const string& trainFile, const string& devFile, const stri
   for (int iter = 0; iter < maxIter; ++iter) {
     std::cout << "##### Iteration " << iter << std::endl;
     srand(iter);
-    //random_shuffle(indexes.begin(), indexes.end());
+    random_shuffle(indexes.begin(), indexes.end());
     std::cout << "random: " << indexes[0] << ", " << indexes[indexes.size() - 1] << std::endl;
     eval.reset();
     for (int updateIter = 0; updateIter < oneIterMaxRound; updateIter++) {

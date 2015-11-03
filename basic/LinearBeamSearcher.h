@@ -32,6 +32,7 @@ class LinearBeamSearcher {
 public:
   LinearBeamSearcher() {
     _dropOut = 0.5;
+    _delta = 0.2;
   }
   ~LinearBeamSearcher() {
   }
@@ -46,6 +47,8 @@ public:
   Metric _eval;
 
   dtype _dropOut;
+
+  dtype _delta;
 
   enum {
     BEAM_SIZE = 16, MAX_SENTENCE_SIZE = 512
@@ -92,7 +95,7 @@ public:
 public:
 
   inline void init() {
-    _linearfeatSize = 3 * fe._featAlphabet.size();
+    _linearfeatSize = 3*fe._featAlphabet.size();
 
     _layer_linear.initial(_linearfeatSize, 10);
   }
@@ -167,6 +170,10 @@ public:
           _layer_linear.ComputeForwardScore(scored_action.feat._nSparseFeat, scored_action.score);
           //std::cout << "add start, action = " << actions[tmp_j] << ", cur ac score = " << scored_action.score << ", orgin score = " << pGenerator->_score << std::endl;;
           scored_action.score += pGenerator->_score;
+          if(actions[tmp_j] != correct_action){
+            scored_action.score += _delta;
+          }
+
           beam.add_elem(scored_action);
 
           //std::cout << "new scored_action : " << scored_action.score << ", action = " << scored_action.action << ", state = " << scored_action.item->str() << std::endl;
@@ -287,6 +294,9 @@ public:
     _layer_linear.ComputeForwardScore(pGoldState->_curFeat._nSparseFeat, goldscore);
 
     delta = predscore - goldscore;
+    if(pPredState->_lastAction != pGoldState->_lastAction){
+      delta += _delta;
+    }
 
     _layer_linear.ComputeBackwardLoss(pPredState->_curFeat._nSparseFeat, predLoss);
     _layer_linear.ComputeBackwardLoss(pGoldState->_curFeat._nSparseFeat, goldLoss);
