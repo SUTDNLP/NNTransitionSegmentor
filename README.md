@@ -7,7 +7,8 @@ What is the transition-based framework with beam-search decoding? Please see our
 Performance
 ======
 Take averaged perceptron as an example (CTB6.0, please refer to [LibN3L: A lightweight Package for Neural NLP](https://github.com/SUTDNLP/LibN3L/blob/master/description\(expect%20for%20lrec2016\).pdf) for details):  
-Both ZPar and this package obtain performance about 95.08%
+Both ZPar and this package obtain performance about 95.08%;  
+The normal sparse model, with max-margin training, reaches a F-measure of 95.24%.  
 
 Compile
 ======
