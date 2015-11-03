@@ -59,6 +59,10 @@ public:
     _wordnum = -1;
   }
 
+  virtual ~CStateItem(){
+	  clear();
+  }
+
   void initSentence(const std::vector<std::string>* pCharacters) {
     _pCharacters = pCharacters;
     _characterSize = pCharacters->size();

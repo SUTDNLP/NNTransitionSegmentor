@@ -51,11 +51,12 @@ public:
 
 public:
 
-  void setFeatureFormat(bool bStringFeat) {
+  inline void setFeatureFormat(bool bStringFeat) {
     _bStringFeat = bStringFeat;
   }
 
-  void setAlphaIncreasing(bool alphaIncreasing){
+
+  inline void setAlphaIncreasing(bool alphaIncreasing){
     if(alphaIncreasing){
       _featAlphabet.set_fixed_flag(false);
       _wordAlphabet.set_fixed_flag(false);
@@ -71,6 +72,15 @@ public:
       _actionAlphabet.set_fixed_flag(true);
     }
   }
+
+  inline int getCharAlphaId(const std::string & oneChar){
+    return _charAlphabet[oneChar];
+  }
+
+  inline int getBiCharAlphaId(const std::string & twoChar){
+    return _bicharAlphabet[twoChar];
+  }
+
 
   void extractFeature(const CStateItem * curState, const CAction& nextAC, Feature& feat) {
     feat.clear();

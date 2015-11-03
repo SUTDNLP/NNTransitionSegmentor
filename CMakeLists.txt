@@ -38,9 +38,11 @@ SET( CMAKE_SHARED_LINKER_FLAGS  "-lm -lopenblas")
 #aux_source_directory(. DIR_SRCS)
 
 
+add_executable(StackLSTMSegmentor StackLSTMSegmentor.cpp)
 add_executable(LinearSegmentor LinearSegmentor.cpp)
 add_executable(APSegmentor APSegmentor.cpp)
 
+target_link_libraries(StackLSTMSegmentor openblas)
 target_link_libraries(LinearSegmentor openblas)
 target_link_libraries(APSegmentor openblas)
 

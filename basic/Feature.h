@@ -16,14 +16,14 @@ class Feature {
 
 public:
   vector<int> _nSparseFeat;
-  vector<int> _nCharFeat;
-  vector<int> _nBiCharFeat;
+  //vector<int> _nCharFeat;
+  //vector<int> _nBiCharFeat;
   vector<int> _nWordFeat;
   vector<int> _nActionFeat;
 
   vector<string> _strSparseFeat;
-  vector<string> _strCharFeat;
-  vector<string> _strBiCharFeat;
+  //vector<string> _strCharFeat;
+  //vector<string> _strBiCharFeat;
   vector<string> _strWordFeat;
   vector<string> _strActionFeat;
 
@@ -55,12 +55,12 @@ public:
       for (int idx = 0; idx < other._strSparseFeat.size(); idx++) {
         _strSparseFeat.push_back(other._strSparseFeat[idx]);
       }
-      for (int idx = 0; idx < other._strCharFeat.size(); idx++) {
-        _strCharFeat.push_back(other._strCharFeat[idx]);
-      }
-      for (int idx = 0; idx < other._strBiCharFeat.size(); idx++) {
-        _strBiCharFeat.push_back(other._strBiCharFeat[idx]);
-      }
+      //for (int idx = 0; idx < other._strCharFeat.size(); idx++) {
+      //  _strCharFeat.push_back(other._strCharFeat[idx]);
+      //}
+      //for (int idx = 0; idx < other._strBiCharFeat.size(); idx++) {
+      //  _strBiCharFeat.push_back(other._strBiCharFeat[idx]);
+      //}
       for (int idx = 0; idx < other._strWordFeat.size(); idx++) {
         _strWordFeat.push_back(other._strWordFeat[idx]);
       }
@@ -71,12 +71,13 @@ public:
       for (int idx = 0; idx < other._nSparseFeat.size(); idx++) {
         _nSparseFeat.push_back(other._nSparseFeat[idx]);
       }
-      for (int idx = 0; idx < other._nCharFeat.size(); idx++) {
-        _nCharFeat.push_back(other._nCharFeat[idx]);
-      }
-      for (int idx = 0; idx < other._nBiCharFeat.size(); idx++) {
-        _nBiCharFeat.push_back(other._nBiCharFeat[idx]);
-      }
+
+      //for (int idx = 0; idx < other._nCharFeat.size(); idx++) {
+      //  _nCharFeat.push_back(other._nCharFeat[idx]);
+      //}
+      //for (int idx = 0; idx < other._nBiCharFeat.size(); idx++) {
+      //  _nBiCharFeat.push_back(other._nBiCharFeat[idx]);
+      //}
       for (int idx = 0; idx < other._nWordFeat.size(); idx++) {
         _nWordFeat.push_back(other._nWordFeat[idx]);
       }
@@ -88,14 +89,14 @@ public:
 
   void clear() {
     _nSparseFeat.clear();
-    _nCharFeat.clear();
-    _nBiCharFeat.clear();
+    //_nCharFeat.clear();
+    //_nBiCharFeat.clear();
     _nWordFeat.clear();
     _nActionFeat.clear();
 
     _strSparseFeat.clear();
-    _strCharFeat.clear();
-    _strBiCharFeat.clear();
+    //_strCharFeat.clear();
+    //_strBiCharFeat.clear();
     _strWordFeat.clear();
     _strActionFeat.clear();
   }

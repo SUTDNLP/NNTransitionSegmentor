@@ -1,12 +1,12 @@
 /*
- * APBeamSearcher.h
+ * StackLSTMBeamSearcher.h
  *
  *  Created on: Mar 25, 2015
  *      Author: mszhang
  */
 
-#ifndef SRC_APBeamSearcher_H_
-#define SRC_APBeamSearcher_H_
+#ifndef SRC_StackLSTMBeamSearcher_H_
+#define SRC_StackLSTMBeamSearcher_H_
 
 #include <hash_set>
 #include <iostream>
@@ -27,63 +27,165 @@ using namespace mshadow::utils;
 
 //re-implementation of Yue and Clark ACL (2007)
 template<typename xpu>
-class APBeamSearcher {
+class StackLSTMBeamSearcher {
 
 public:
-	class CScoredStateAction {
-	public:
-	  CAction action;
-	  const CStateItem *item;
-	  dtype score;
-	  Feature feat;
+  class NeuralFeature {
+  public:
+    Tensor<xpu, 2, dtype> wordRepresentation;
+    Tensor<xpu, 2, dtype> actionRepresentation;
+    Tensor<xpu, 2, dtype> wordHidden;  //lstm
+    Tensor<xpu, 2, dtype> actionHidden;  //lstm
+    bool bAllocated;
 
-	public:
-	  CScoredStateAction() :
-	      item(0), action(-1), score(0) {
-	    feat.setFeatureFormat(false);
-	    feat.clear();
-	  }
+  public:
+    NeuralFeature() {
+      bAllocated = false;
+    }
 
+    ~NeuralFeature() {
+      release();
+    }
 
-	public:
-	  bool operator <(const CScoredStateAction &a1) const {
-	    return score < a1.score;
-	  }
-	  bool operator >(const CScoredStateAction &a1) const {
-	    return score > a1.score;
-	  }
-	  bool operator <=(const CScoredStateAction &a1) const {
-	    return score <= a1.score;
-	  }
-	  bool operator >=(const CScoredStateAction &a1) const {
-	    return score >= a1.score;
-	  }
+  public:
+    inline void init(int wordDim, int wordHiddenDim, int actionDim, int actionHiddenDim) {
+      wordRepresentation = NewTensor<xpu>(Shape2(1, wordDim), d_zero);
+      wordHidden = NewTensor<xpu>(Shape2(1, wordHiddenDim), d_zero);
+      actionRepresentation = NewTensor<xpu>(Shape2(1, actionDim), d_zero);
+      actionHidden = NewTensor<xpu>(Shape2(1, actionHiddenDim), d_zero);
+      bAllocated = true;
+    }
 
+    inline void release() {
+      if (bAllocated) {
+        FreeSpace(&wordRepresentation);
+        FreeSpace(&wordHidden);
+        FreeSpace(&actionRepresentation);
+        FreeSpace(&actionHidden);
+      }
+    }
 
-	};
+    inline void copy(const NeuralFeature& other) {
+      if (other.bAllocated) {
+        if (bAllocated) {
+          if (other.wordRepresentation.size(1) != wordRepresentation.size(1)) {
+            FreeSpace(&wordRepresentation);
+            wordRepresentation = NewTensor<xpu>(Shape2(1, other.wordRepresentation.size(1)), d_zero);
+          } else {
+            wordRepresentation = 0.0;
+          }
 
-	class CScoredStateAction_Compare {
-	public:
-	  int operator()(const CScoredStateAction &o1, const CScoredStateAction &o2) const {
+          if (other.wordHidden.size(1) != wordHidden.size(1)) {
+            FreeSpace(&wordHidden);
+            wordHidden = NewTensor<xpu>(Shape2(1, other.wordHidden.size(1)), d_zero);
+          } else {
+            wordHidden = 0.0;
+          }
 
-	    if (o1.score < o2.score)
-	      return -1;
-	    else if (o1.score > o2.score)
-	      return 1;
-	    else
-	      return 0;
-	  }
-	};
+          if (other.actionRepresentation.size(1) != actionRepresentation.size(1)) {
+            FreeSpace(&actionRepresentation);
+            actionRepresentation = NewTensor<xpu>(Shape2(1, other.actionRepresentation.size(1)), d_zero);
+          } else {
+            actionRepresentation = 0.0;
+          }
+
+          if (other.actionHidden.size(1) != actionHidden.size(1)) {
+            FreeSpace(&actionHidden);
+            actionHidden = NewTensor<xpu>(Shape2(1, other.actionHidden.size(1)), d_zero);
+          } else {
+            actionHidden = 0.0;
+          }
+        } else {
+          wordRepresentation = NewTensor<xpu>(Shape2(1, other.wordRepresentation.size(1)), d_zero);
+          wordHidden = NewTensor<xpu>(Shape2(1, other.wordHidden.size(1)), d_zero);
+          actionRepresentation = NewTensor<xpu>(Shape2(1, other.actionRepresentation.size(1)), d_zero);
+          actionHidden = NewTensor<xpu>(Shape2(1, other.actionHidden.size(1)), d_zero);
+        }
+
+        wordRepresentation += other.wordRepresentation;
+        wordHidden += other.wordHidden;
+        actionRepresentation += other.actionRepresentation;
+        actionHidden += other.actionHidden;
+
+      }
+
+      bAllocated = other.bAllocated;
+    }
+
+  };
+
+  class NeuralState: public CStateItem {
+    NeuralFeature _nnfeat;
+
+  public:
+    NeuralState() :
+        CStateItem() {
+    }
+
+    NeuralState(const std::vector<std::string>* pCharacters) :
+        CStateItem(pCharacters) {
+    }
+
+    ~NeuralState() {
+      _nnfeat.release();
+    }
+
+  };
+
+  class CScoredStateAction {
+  public:
+    CAction action;
+    const NeuralState *item;
+    dtype score;
+    Feature feat;
+    NeuralFeature nnfeat;
+
+  public:
+    CScoredStateAction() :
+        item(0), action(-1), score(0) {
+      feat.setFeatureFormat(false);
+      feat.clear();
+    }
+
+  public:
+    bool operator <(const CScoredStateAction &a1) const {
+      return score < a1.score;
+    }
+    bool operator >(const CScoredStateAction &a1) const {
+      return score > a1.score;
+    }
+    bool operator <=(const CScoredStateAction &a1) const {
+      return score <= a1.score;
+    }
+    bool operator >=(const CScoredStateAction &a1) const {
+      return score >= a1.score;
+    }
+
+  };
+
+  class CScoredStateAction_Compare {
+  public:
+    int operator()(const CScoredStateAction &o1, const CScoredStateAction &o2) const {
+
+      if (o1.score < o2.score)
+        return -1;
+      else if (o1.score > o2.score)
+        return 1;
+      else
+        return 0;
+    }
+  };
 
 public:
-  APBeamSearcher() {
+  StackLSTMBeamSearcher() {
     _dropOut = 0.5;
+    _delta = 0.2;
   }
-  ~APBeamSearcher() {
+  ~StackLSTMBeamSearcher() {
   }
 
 public:
-  AvgPerceptron1O<xpu> _layer_linear;
+  SparseUniLayer1O<xpu> _layer_linear;
 
   FeatureExtraction fe;
 
@@ -92,6 +194,8 @@ public:
   Metric _eval;
 
   dtype _dropOut;
+
+  dtype _delta;
 
   enum {
     BEAM_SIZE = 16, MAX_SENTENCE_SIZE = 512
@@ -163,16 +267,16 @@ public:
   dtype trainOneExample(const std::vector<std::string>& sentence, const vector<CAction>& goldAC) {
     if (sentence.size() >= MAX_SENTENCE_SIZE)
       return 0.0;
-    static CStateItem lattice[(MAX_SENTENCE_SIZE + 1) * (BEAM_SIZE + 1)];
-    static CStateItem * lattice_index[MAX_SENTENCE_SIZE + 1];
+    static NeuralState lattice[(MAX_SENTENCE_SIZE + 1) * (BEAM_SIZE + 1)];
+    static NeuralState *lattice_index[MAX_SENTENCE_SIZE + 1];
 
     int length = sentence.size();
     dtype cost = 0.0;
     dtype score = 0.0;
 
-    const static CStateItem *pGenerator;
-    const static CStateItem *pBestGen;
-    static CStateItem *correctState;
+    const static NeuralState *pGenerator;
+    const static NeuralState *pBestGen;
+    static NeuralState *correctState;
 
     bool bCorrect;  // used in learning for early update
     int index, tmp_i, tmp_j;
@@ -210,9 +314,13 @@ public:
           scored_action.action = actions[tmp_j];
           scored_action.item = pGenerator;
           fe.extractFeature(pGenerator, actions[tmp_j], scored_action.feat);
-          _layer_linear.ComputeForwardScore(scored_action.feat._nSparseFeat, scored_action.score, true);
+          _layer_linear.ComputeForwardScore(scored_action.feat._nSparseFeat, scored_action.score);
           //std::cout << "add start, action = " << actions[tmp_j] << ", cur ac score = " << scored_action.score << ", orgin score = " << pGenerator->_score << std::endl;;
           scored_action.score += pGenerator->_score;
+          if (actions[tmp_j] != correct_action) {
+            scored_action.score += _delta;
+          }
+
           beam.add_elem(scored_action);
 
           //std::cout << "new scored_action : " << scored_action.score << ", action = " << scored_action.action << ", state = " << scored_action.item->str() << std::endl;
@@ -320,25 +428,29 @@ public:
     return cost;
   }
 
-  dtype backPropagationStates(const CStateItem *pPredState, const CStateItem *pGoldState, dtype predLoss, dtype goldLoss) {
+  dtype backPropagationStates(const NeuralState *pPredState, const NeuralState *pGoldState, dtype predLoss, dtype goldLoss) {
     if (pPredState == pGoldState)
       return 0.0;
 
-    if(pPredState->_nextPosition != pGoldState->_nextPosition){
+    if (pPredState->_nextPosition != pGoldState->_nextPosition) {
       std::cout << "state align error" << std::endl;
     }
     dtype delta = 0.0;
     dtype predscore, goldscore;
-    _layer_linear.ComputeForwardScore(pPredState->_curFeat._nSparseFeat, predscore, true);
-    _layer_linear.ComputeForwardScore(pGoldState->_curFeat._nSparseFeat, goldscore, true);
+    _layer_linear.ComputeForwardScore(pPredState->_curFeat._nSparseFeat, predscore);
+    _layer_linear.ComputeForwardScore(pGoldState->_curFeat._nSparseFeat, goldscore);
 
     delta = predscore - goldscore;
+    if (pPredState->_lastAction != pGoldState->_lastAction) {
+      delta += _delta;
+    }
 
     _layer_linear.ComputeBackwardLoss(pPredState->_curFeat._nSparseFeat, predLoss);
     _layer_linear.ComputeBackwardLoss(pGoldState->_curFeat._nSparseFeat, goldLoss);
 
     //currently we use a uniform loss
-    delta += backPropagationStates(pPredState->_prevState, pGoldState->_prevState, predLoss, goldLoss);
+    delta += backPropagationStates(static_cast<const NeuralState*>(pPredState->_prevState), static_cast<const NeuralState*>(pGoldState->_prevState), predLoss,
+        goldLoss);
 
     dtype compare_delta = pPredState->_score - pGoldState->_score;
     if (abs(delta - compare_delta) > 0.01) {
@@ -352,15 +464,15 @@ public:
     setAlphaIncreasing(false);
     if (sentence.size() >= MAX_SENTENCE_SIZE)
       return false;
-    static CStateItem lattice[(MAX_SENTENCE_SIZE + 1) * (BEAM_SIZE + 1)];
-    static CStateItem *lattice_index[MAX_SENTENCE_SIZE + 1];
+    static NeuralState lattice[(MAX_SENTENCE_SIZE + 1) * (BEAM_SIZE + 1)];
+    static NeuralState *lattice_index[MAX_SENTENCE_SIZE + 1];
 
     int length = sentence.size();
     dtype cost = 0.0;
     dtype score = 0.0;
 
-    const static CStateItem *pGenerator;
-    const static CStateItem *pBestGen;
+    const static NeuralState *pGenerator;
+    const static NeuralState *pBestGen;
 
     int index, tmp_i, tmp_j;
     std::vector<CAction> actions; // actions to apply for a candidate
@@ -445,4 +557,4 @@ public:
 
 };
 
-#endif /* SRC_APBeamSearcher_H_ */
+#endif /* SRC_StackLSTMBeamSearcher_H_ */

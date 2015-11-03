@@ -17,7 +17,6 @@
 #include "Metric.h"
 #include "N3L.h"
 #include "State.h"
-#include "ScoredStateAction.h"
 #include "Action.h"
 
 using namespace nr;
@@ -29,6 +28,53 @@ using namespace mshadow::utils;
 //re-implementation of Yue and Clark ACL (2007)
 template<typename xpu>
 class LinearBeamSearcher {
+
+public:
+	class CScoredStateAction {
+	public:
+	  CAction action;
+	  const CStateItem *item;
+	  dtype score;
+	  Feature feat;
+
+	public:
+	  CScoredStateAction() :
+	      item(0), action(-1), score(0) {
+	    feat.setFeatureFormat(false);
+	    feat.clear();
+	  }
+
+
+	public:
+	  bool operator <(const CScoredStateAction &a1) const {
+	    return score < a1.score;
+	  }
+	  bool operator >(const CScoredStateAction &a1) const {
+	    return score > a1.score;
+	  }
+	  bool operator <=(const CScoredStateAction &a1) const {
+	    return score <= a1.score;
+	  }
+	  bool operator >=(const CScoredStateAction &a1) const {
+	    return score >= a1.score;
+	  }
+
+
+	};
+
+	class CScoredStateAction_Compare {
+	public:
+	  int operator()(const CScoredStateAction &o1, const CScoredStateAction &o2) const {
+
+	    if (o1.score < o2.score)
+	      return -1;
+	    else if (o1.score > o2.score)
+	      return 1;
+	    else
+	      return 0;
+	  }
+	};
+
 public:
   LinearBeamSearcher() {
     _dropOut = 0.5;
