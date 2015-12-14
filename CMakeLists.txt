@@ -1,7 +1,10 @@
 project(OpenSentiment)
 
 include_directories(
-  basic
+  basic/
+  feature/
+  model/
+  state/
   /opt/mshadow/
   ../LibN3L/
 )

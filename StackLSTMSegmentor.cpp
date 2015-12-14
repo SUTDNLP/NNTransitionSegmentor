@@ -36,7 +36,11 @@ int Segmentor::createAlphabet(const vector<Instance>& vecInsts) {
   assert(numInstance > 0);
 
   static Metric eval;
-  static CStateItem state[m_classifier.MAX_SENTENCE_SIZE];
+#if USE_CUDA==1
+  static CStateItem<gpu> state[m_classifier.MAX_SENTENCE_SIZE];
+#else
+  static CStateItem<cpu> state[m_classifier.MAX_SENTENCE_SIZE];
+#endif
   static Feature feat;
   static vector<string> output;
   static CAction answer;
@@ -97,7 +101,7 @@ int Segmentor::createAlphabet(const vector<Instance>& vecInsts) {
   m_classifier.addToActionAlphabet(action_stat);
   m_classifier.addToWordAlphabet(word_stat, m_options.wordEmbFineTune ? m_options.wordCutOff : 0);
   m_classifier.addToCharAlphabet(char_stat, m_options.charEmbFineTune ? m_options.charCutOff : 0);
-  m_classifier.addToBiCharAlphabet(bichar_stat, m_options.tagEmbFineTune ? m_options.tagCutOff : 0);
+  m_classifier.addToBiCharAlphabet(bichar_stat, m_options.bicharEmbFineTune ? m_options.bicharCutOff : 0);
   m_classifier.addToFeatureAlphabet(feat_stat, m_options.featCutOff);
 
   cout << numInstance << " " << endl;
@@ -154,7 +158,7 @@ int Segmentor::addTestWordAlpha(const vector<Instance>& vecInsts) {
     m_classifier.addToWordAlphabet(word_stat, 0);
   if (!m_options.charEmbFineTune)
     m_classifier.addToCharAlphabet(char_stat, 0);
-  if (!m_options.tagEmbFineTune)
+  if (!m_options.bicharEmbFineTune)
     m_classifier.addToBiCharAlphabet(bichar_stat, 0);
 
   cout << "Remain word num: " << m_classifier.fe._wordAlphabet.size() << endl;
@@ -169,7 +173,11 @@ void Segmentor::getGoldActions(const vector<Instance>& vecInsts, vector<vector<C
   vecActions.clear();
 
   static Metric eval;
-  static CStateItem state[m_classifier.MAX_SENTENCE_SIZE];
+#if USE_CUDA==1
+  static CStateItem<gpu> state[m_classifier.MAX_SENTENCE_SIZE];
+#else
+  static CStateItem<cpu> state[m_classifier.MAX_SENTENCE_SIZE];
+#endif
   static vector<string> output;
   static CAction answer;
   eval.reset();
@@ -213,7 +221,7 @@ void Segmentor::getGoldActions(const vector<Instance>& vecInsts, vector<vector<C
 }
 
 void Segmentor::train(const string& trainFile, const string& devFile, const string& testFile, const string& modelFile, const string& optionFile,
-    const string& wordEmbFile) {
+    const string& wordEmbFile, const string& charEmbFile, const string& bicharEmbFile) {
   if (optionFile != "")
     m_options.load(optionFile);
 
@@ -238,9 +246,52 @@ void Segmentor::train(const string& trainFile, const string& devFile, const stri
     addTestWordAlpha(otherInsts[idx]);
   }
 
+  NRMat<dtype> wordEmb;
+  if (wordEmbFile != "") {
+  	readEmbeddings(m_classifier.fe._wordAlphabet, wordEmbFile, wordEmb);
+  } else {
+    wordEmb.resize(m_classifier.fe._wordAlphabet.size(), m_options.wordEmbSize);
+    wordEmb.randu(1000);
+  }
 
-  m_classifier.init();
+  cout << "word emb dim is " << wordEmb.ncols();
+
+  NRMat<dtype> charEmb;
+  if (charEmbFile != "") {
+  	readEmbeddings(m_classifier.fe._charAlphabet, charEmbFile, charEmb);
+  } else {
+  	charEmb.resize(m_classifier.fe._charAlphabet.size(), m_options.charEmbSize);
+  	charEmb.randu(2000);
+  }
+
+  cout << "char emb dim is " << charEmb.ncols();
+
+  NRMat<dtype> bicharEmb;
+  if (bicharEmbFile != "") {
+  	readEmbeddings(m_classifier.fe._bicharAlphabet, bicharEmbFile, bicharEmb);
+  } else {
+  	bicharEmb.resize(m_classifier.fe._bicharAlphabet.size(), m_options.bicharEmbSize);
+  	bicharEmb.randu(2000);
+  }
+
+  cout << "bichar emb dim is " << bicharEmb.ncols();
+
+  NRMat<dtype> actionEmb;
+  actionEmb.resize(m_classifier.fe._actionAlphabet.size(), m_options.actionEmbSize);
+  actionEmb.randu(3000);
+
+  cout << "action emb dim is " << actionEmb.ncols();
+
+
+  m_classifier.init(wordEmb, m_options.wordNgram, m_options.wordHiddenSize, m_options.wordRNNHiddenSize,
+			actionEmb, m_options.actionNgram, m_options.actionHiddenSize, m_options.actionRNNHiddenSize,
+			charEmb, bicharEmb, m_options.charcontext, m_options.charHiddenSize, m_options.charRNNHiddenSize,
+			m_options.sepHiddenSize, m_options.appHiddenSize);
+
   m_classifier.setDropValue(m_options.dropProb);
+  m_classifier.setWordEmbFinetune(m_options.wordEmbFineTune);
+  m_classifier.setCharEmbFinetune(m_options.charEmbFineTune);
+  m_classifier.setBiCharEmbFinetune(m_options.bicharEmbFineTune);
 
   vector<vector<CAction> > trainInstGoldactions;
   getGoldActions(trainInsts, trainInstGoldactions);
@@ -397,8 +448,8 @@ void Segmentor::test(const string& testFile, const string& outputFile, const str
   os.close();
 }
 
-/*
-void Segmentor::readWordEmbeddings(const string& inFile, NRMat<dtype>& wordEmb) {
+
+void Segmentor::readEmbeddings(Alphabet &alpha, const string& inFile, NRMat<dtype>& emb) {
   static ifstream inf;
   if (inf.is_open()) {
     inf.close();
@@ -418,19 +469,18 @@ void Segmentor::readWordEmbeddings(const string& inFile, NRMat<dtype>& wordEmb) 
       break;
   }
 
-  int unknownId = m_wordAlphabet.from_string(unknownkey);
+  int unknownId = alpha.from_string(m_classifier.fe.unknownkey);
 
   static vector<string> vecInfo;
   split_bychar(strLine, vecInfo, ' ');
   int wordDim = vecInfo.size() - 1;
 
-  std::cout << "word embedding dim is " << wordDim << std::endl;
-  m_options.wordEmbSize = wordDim;
+  std::cout << "embedding dim is " << wordDim << std::endl;
 
-  wordEmb.resize(m_wordAlphabet.size(), wordDim);
-  wordEmb = 0.0;
+  emb.resize(alpha.size(), wordDim);
+  emb = 0.0;
   curWord = normalize_to_lowerwithdigit(vecInfo[0]);
-  wordId = m_wordAlphabet.from_string(curWord);
+  wordId = alpha.from_string(curWord);
   hash_set<int> indexers;
   dtype sum[wordDim];
   int count = 0;
@@ -443,7 +493,7 @@ void Segmentor::readWordEmbeddings(const string& inFile, NRMat<dtype>& wordEmb) 
     for (int idx = 0; idx < wordDim; idx++) {
       dtype curValue = atof(vecInfo[idx + 1].c_str());
       sum[idx] = curValue;
-      wordEmb[wordId][idx] = curValue;
+      emb[wordId][idx] = curValue;
     }
 
   } else {
@@ -463,7 +513,7 @@ void Segmentor::readWordEmbeddings(const string& inFile, NRMat<dtype>& wordEmb) 
       std::cout << "error embedding file" << std::endl;
     }
     curWord = normalize_to_lowerwithdigit(vecInfo[0]);
-    wordId = m_wordAlphabet.from_string(curWord);
+    wordId = alpha.from_string(curWord);
     if (wordId >= 0) {
       count++;
       if (unknownId == wordId)
@@ -472,8 +522,8 @@ void Segmentor::readWordEmbeddings(const string& inFile, NRMat<dtype>& wordEmb) 
 
       for (int idx = 0; idx < wordDim; idx++) {
         dtype curValue = atof(vecInfo[idx + 1].c_str());
-        sum[idx] = curValue;
-        wordEmb[wordId][idx] += curValue;
+        sum[idx] += curValue;
+        emb[wordId][idx] += curValue;
       }
     }
 
@@ -481,7 +531,7 @@ void Segmentor::readWordEmbeddings(const string& inFile, NRMat<dtype>& wordEmb) 
 
   if (!bHasUnknown) {
     for (int idx = 0; idx < wordDim; idx++) {
-      wordEmb[unknownId][idx] = sum[idx] / count;
+      emb[unknownId][idx] = sum[idx] / count;
     }
     count++;
     std::cout << unknownkey << " not found, using averaged value to initialize." << std::endl;
@@ -489,107 +539,21 @@ void Segmentor::readWordEmbeddings(const string& inFile, NRMat<dtype>& wordEmb) 
 
   int oovWords = 0;
   int totalWords = 0;
-  for (int id = 0; id < m_wordAlphabet.size(); id++) {
+  for (int id = 0; id < alpha.size(); id++) {
     if (indexers.find(id) == indexers.end()) {
       oovWords++;
       for (int idx = 0; idx < wordDim; idx++) {
-        wordEmb[id][idx] = wordEmb[unknownId][idx];
+        emb[id][idx] = emb[unknownId][idx];
       }
     }
     totalWords++;
   }
 
-  std::cout << "OOV num is " << oovWords << ", total num is " << m_wordAlphabet.size() << ", embedding oov ratio is " << oovWords * 1.0 / m_wordAlphabet.size()
+  std::cout << "OOV num is " << oovWords << ", total num is " << alpha.size() << ", embedding oov ratio is " << oovWords * 1.0 / alpha.size()
       << std::endl;
 
 }
 
-void Segmentor::readWordClusters(const string& inFile) {
-  static ifstream inf;
-  if (inf.is_open()) {
-    inf.close();
-    inf.clear();
-  }
-  inf.open(inFile.c_str());
-
-  static string strLine, curWord;
-  static int wordId;
-
-  //find the first line, decide the wordDim;
-  while (1) {
-    if (!my_getline(inf, strLine)) {
-      break;
-    }
-    if (!strLine.empty())
-      break;
-  }
-
-  int unknownId = m_wordAlphabet.from_string(unknownkey);
-
-  static vector<string> vecInfo;
-  split_bychar(strLine, vecInfo, ' ');
-  int wordClusterNum = vecInfo.size() - 1;
-
-  std::cout << "word cluster number is " << wordClusterNum << std::endl;
-
-  m_wordClusters.resize(m_wordAlphabet.size(), wordClusterNum);
-  m_wordClusters = "0";
-  curWord = normalize_to_lowerwithdigit(vecInfo[0]);
-  wordId = m_wordAlphabet.from_string(curWord);
-  hash_set<int> indexers;
-  int count = 0;
-  bool bHasUnknown = false;
-  if (wordId >= 0) {
-    count++;
-    if (unknownId == wordId)
-      bHasUnknown = true;
-    indexers.insert(wordId);
-    for (int idx = 0; idx < wordClusterNum; idx++) {
-      m_wordClusters[wordId][idx] = vecInfo[idx + 1];
-    }
-  }
-
-  while (1) {
-    if (!my_getline(inf, strLine)) {
-      break;
-    }
-    if (strLine.empty())
-      continue;
-    split_bychar(strLine, vecInfo, ' ');
-    if (vecInfo.size() != wordClusterNum + 1) {
-      std::cout << "error embedding file" << std::endl;
-    }
-    curWord = normalize_to_lowerwithdigit(vecInfo[0]);
-    wordId = m_wordAlphabet.from_string(curWord);
-    if (wordId >= 0) {
-      count++;
-      if (unknownId == wordId)
-        bHasUnknown = true;
-      indexers.insert(wordId);
-      for (int idx = 0; idx < wordClusterNum; idx++) {
-        m_wordClusters[wordId][idx] = vecInfo[idx + 1];
-      }
-    }
-
-  }
-
-  int oovWords = 0;
-  int totalWords = 0;
-  for (int id = 0; id < m_wordAlphabet.size(); id++) {
-    if (indexers.find(id) == indexers.end()) {
-      oovWords++;
-      for (int idx = 0; idx < wordClusterNum; idx++) {
-        m_wordClusters[id][idx] = m_wordClusters[unknownId][idx];
-      }
-    }
-    totalWords++;
-  }
-
-  std::cout << "OOV num is " << oovWords << ", total num is " << m_wordAlphabet.size() << ", cluster oov ratio is " << oovWords * 1.0 / m_wordAlphabet.size()
-      << std::endl;
-
-}
-*/
 
 void Segmentor::loadModelFile(const string& inputModelFile) {
 
@@ -601,7 +565,7 @@ void Segmentor::writeModelFile(const string& outputModelFile) {
 
 int main(int argc, char* argv[]) {
   std::string trainFile = "", devFile = "", testFile = "", modelFile = "";
-  std::string wordEmbFile = "", optionFile = "";
+  std::string wordEmbFile = "", charEmbFile = "", bicharEmbFile = "", optionFile = "";
   std::string outputFile = "";
   bool bTrain = false;
   dsr::Argument_helper ah;
@@ -613,6 +577,8 @@ int main(int argc, char* argv[]) {
       "testing corpus to train a model or input file to test a model, optional when training and must when testing", testFile);
   ah.new_named_string("model", "modelFile", "named_string", "model file, must when training and testing", modelFile);
   ah.new_named_string("word", "wordEmbFile", "named_string", "pretrained word embedding file to train a model, optional when training", wordEmbFile);
+  ah.new_named_string("char", "charEmbFile", "named_string", "pretrained char embedding file to train a model, optional when training", charEmbFile);
+  ah.new_named_string("bichar", "bicharEmbFile", "named_string", "pretrained bichar embedding file to train a model, optional when training", bicharEmbFile);
   ah.new_named_string("option", "optionFile", "named_string", "option file to train a model, optional when training", optionFile);
   ah.new_named_string("output", "outputFile", "named_string", "output file to test, must when testing", outputFile);
 
@@ -620,7 +586,7 @@ int main(int argc, char* argv[]) {
 
   Segmentor segmentor;
   if (bTrain) {
-    segmentor.train(trainFile, devFile, testFile, modelFile, optionFile, wordEmbFile);
+    segmentor.train(trainFile, devFile, testFile, modelFile, optionFile, wordEmbFile, charEmbFile, bicharEmbFile);
   } else {
     segmentor.test(testFile, outputFile, modelFile);
   }

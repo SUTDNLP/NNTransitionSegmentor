@@ -10,9 +10,8 @@
 
 #include "N3L.h"
 
-#include "basic/APBeamSearcher.h"
+#include "APBeamSearcher.h"
 #include "Options.h"
-#include "State.h"
 #include "Pipe.h"
 #include "Utf.h"
 

@@ -17,7 +17,7 @@ public:
   int wordCutOff;
   int featCutOff;
   int charCutOff;
-  int tagCutOff;
+  int bicharCutOff;
   dtype initRange;
   int maxIter;
   int batchSize;
@@ -26,18 +26,27 @@ public:
   dtype regParameter;
   dtype dropProb;
 
-  int linearHiddenSize;
-  int hiddenSize;
-  int rnnHiddenSize;
+  int sepHiddenSize;
+  int appHiddenSize;
+
   int wordEmbSize;
-  int wordcontext;
+  int wordNgram;
+  int wordHiddenSize;
+  int wordRNNHiddenSize;
   bool wordEmbFineTune;
-  int tagEmbSize;
-  bool tagEmbFineTune;
+
   int charEmbSize;
+  int bicharEmbSize;
   int charcontext;
+  int charHiddenSize;
+  int charRNNHiddenSize;
   bool charEmbFineTune;
-  int charhiddenSize;
+  bool bicharEmbFineTune;
+
+  int actionEmbSize;
+  int actionNgram;
+  int actionHiddenSize;
+  int actionRNNHiddenSize;
 
   int verboseIter;
   bool saveIntermediate;
@@ -45,16 +54,13 @@ public:
   int maxInstance;
   vector<string> testFiles;
   string outBest;
-  bool seg;
-  int relu;
-  int atomLayers;
-  int rnnLayers;
+
 
   Options() {
     wordCutOff = 0;
     featCutOff = 0;
     charCutOff = 0;
-    tagCutOff = 0;
+    bicharCutOff = 0;
     initRange = 0.01;
     maxIter = 1000;
     batchSize = 1;
@@ -63,18 +69,30 @@ public:
     regParameter = 1e-8;
     dropProb = 0.0;
 
-    linearHiddenSize = 30;
-    hiddenSize = 200;
-    rnnHiddenSize = 300;
+    sepHiddenSize = 200;
+    appHiddenSize = 150;
+
     wordEmbSize = 50;
-    wordcontext = 2;
+    wordNgram = 2;
+    wordHiddenSize = 100;
+    wordRNNHiddenSize = 100;
     wordEmbFineTune = true;
-    tagEmbSize = 50;
-    tagEmbFineTune = true;
+
+
     charEmbSize = 50;
+    bicharEmbSize = 50;
     charcontext = 2;
+    charHiddenSize = 150;
+    charRNNHiddenSize = 100;
     charEmbFineTune = true;
-    charhiddenSize = 50;
+    bicharEmbFineTune = true;
+
+    actionEmbSize = 20;
+    actionNgram = 2;
+    actionHiddenSize = 20;
+    actionRNNHiddenSize = 20;
+
+
 
     verboseIter = 100;
     saveIntermediate = true;
@@ -82,10 +100,6 @@ public:
     maxInstance = -1;
     testFiles.clear();
     outBest = "";
-    relu = 0;
-    seg = false;
-    atomLayers = 1;
-    rnnLayers = 1;
 
   }
 
@@ -104,8 +118,8 @@ public:
         featCutOff = atoi(pr.second.c_str());
       if (pr.first == "charCutOff")
         charCutOff = atoi(pr.second.c_str());
-      if (pr.first == "tagCutOff")
-        tagCutOff = atoi(pr.second.c_str());        
+      if (pr.first == "bicharCutOff")
+        bicharCutOff = atoi(pr.second.c_str());
       if (pr.first == "initRange")
         initRange = atof(pr.second.c_str());
       if (pr.first == "maxIter")
@@ -121,30 +135,52 @@ public:
       if (pr.first == "dropProb")
         dropProb = atof(pr.second.c_str());
 
-      if (pr.first == "linearHiddenSize")
-        linearHiddenSize = atoi(pr.second.c_str());
-      if (pr.first == "hiddenSize")
-        hiddenSize = atoi(pr.second.c_str());
-      if (pr.first == "rnnHiddenSize")
-        rnnHiddenSize = atoi(pr.second.c_str());
-      if (pr.first == "wordcontext")
-        wordcontext = atoi(pr.second.c_str());
+      if (pr.first == "sepHiddenSize")
+        sepHiddenSize = atoi(pr.second.c_str());
+      if (pr.first == "appHiddenSize")
+        appHiddenSize = atoi(pr.second.c_str());
+
+
+
+
       if (pr.first == "wordEmbSize")
         wordEmbSize = atoi(pr.second.c_str());
+      if (pr.first == "wordNgram")
+        wordNgram = atoi(pr.second.c_str());
+      if (pr.first == "wordHiddenSize")
+      	wordHiddenSize = atoi(pr.second.c_str());
+      if (pr.first == "wordRNNHiddenSize")
+      	wordRNNHiddenSize = atoi(pr.second.c_str());
       if (pr.first == "wordEmbFineTune")
         wordEmbFineTune = (pr.second == "true") ? true : false;
-      if (pr.first == "tagEmbSize")
-        tagEmbSize = atoi(pr.second.c_str());
-      if (pr.first == "tagEmbFineTune")
-        tagEmbFineTune = (pr.second == "true") ? true : false;        	
-      if (pr.first == "charcontext")
-        charcontext = atoi(pr.second.c_str());
+
+
       if (pr.first == "charEmbSize")
         charEmbSize = atoi(pr.second.c_str());
+      if (pr.first == "bicharEmbSize")
+        bicharEmbSize = atoi(pr.second.c_str());
+      if (pr.first == "charcontext")
+        charcontext = atoi(pr.second.c_str());
+      if (pr.first == "charHiddenSize")
+        charHiddenSize = atoi(pr.second.c_str());
+      if (pr.first == "charRNNHiddenSize")
+      	charRNNHiddenSize = atoi(pr.second.c_str());
       if (pr.first == "charEmbFineTune")
         charEmbFineTune = (pr.second == "true") ? true : false;
-      if (pr.first == "charhiddenSize")
-        charhiddenSize = atoi(pr.second.c_str());
+      if (pr.first == "bicharEmbFineTune")
+        bicharEmbFineTune = (pr.second == "true") ? true : false;
+
+
+      if (pr.first == "actionEmbSize")
+        actionEmbSize = atoi(pr.second.c_str());
+      if (pr.first == "actionNgram")
+        actionNgram = atoi(pr.second.c_str());
+      if (pr.first == "actionHiddenSize")
+      	actionHiddenSize = atoi(pr.second.c_str());
+      if (pr.first == "actionRNNHiddenSize")
+      	actionRNNHiddenSize = atoi(pr.second.c_str());
+
+
         
       if (pr.first == "verboseIter")
         verboseIter = atoi(pr.second.c_str());
@@ -158,14 +194,6 @@ public:
         testFiles.push_back(pr.second);
       if (pr.first == "outBest")
         outBest = pr.second;
-      if (pr.first == "relu")
-        relu = atoi(pr.second.c_str());
-      if (pr.first == "seg")
-        seg = (pr.second == "true") ? true : false;
-      if (pr.first == "atomLayers")
-        atomLayers = atoi(pr.second.c_str());
-      if (pr.first == "rnnLayers")
-        rnnLayers = atoi(pr.second.c_str());
 
     }
   }
@@ -174,7 +202,7 @@ public:
     std::cout << "wordCutOff = " << wordCutOff << std::endl;
     std::cout << "featCutOff = " << featCutOff << std::endl;
     std::cout << "charCutOff = " << charCutOff << std::endl;
-    std::cout << "tagCutOff = " << tagCutOff << std::endl;
+    std::cout << "bicharCutOff = " << bicharCutOff << std::endl;
     std::cout << "initRange = " << initRange << std::endl;
     std::cout << "maxIter = " << maxIter << std::endl;
     std::cout << "batchSize = " << batchSize << std::endl;
@@ -183,18 +211,30 @@ public:
     std::cout << "regParameter = " << regParameter << std::endl;
     std::cout << "dropProb = " << dropProb << std::endl;
 
-    std::cout << "linearHiddenSize = " << linearHiddenSize << std::endl;
-    std::cout << "hiddenSize = " << hiddenSize << std::endl;
-    std::cout << "rnnHiddenSize = " << rnnHiddenSize << std::endl;
+    std::cout << "sepHiddenSize = " << sepHiddenSize << std::endl;
+    std::cout << "appHiddenSize = " << appHiddenSize << std::endl;
+
+
+
     std::cout << "wordEmbSize = " << wordEmbSize << std::endl;
-    std::cout << "wordcontext = " << wordcontext << std::endl;
+    std::cout << "wordNgram = " << wordNgram << std::endl;
+    std::cout << "wordHiddenSize = " << wordHiddenSize << std::endl;
+    std::cout << "wordRNNHiddenSize = " << wordRNNHiddenSize << std::endl;
     std::cout << "wordEmbFineTune = " << wordEmbFineTune << std::endl;
-    std::cout << "tagEmbSize = " << tagEmbSize << std::endl;
-    std::cout << "tagEmbFineTune = " << tagEmbFineTune << std::endl;
+
     std::cout << "charEmbSize = " << charEmbSize << std::endl;
+    std::cout << "bicharEmbSize = " << bicharEmbSize << std::endl;
     std::cout << "charcontext = " << charcontext << std::endl;
+    std::cout << "charHiddenSize = " << charHiddenSize << std::endl;
+    std::cout << "charRNNHiddenSize = " << charRNNHiddenSize << std::endl;
     std::cout << "charEmbFineTune = " << charEmbFineTune << std::endl;
-    std::cout << "charhiddenSize = " << charhiddenSize << std::endl;
+    std::cout << "bicharEmbFineTune = " << bicharEmbFineTune << std::endl;
+
+
+    std::cout << "actionEmbSize = " << actionEmbSize << std::endl;
+    std::cout << "actionNgram = " << actionNgram << std::endl;
+    std::cout << "actionHiddenSize = " << actionHiddenSize << std::endl;
+    std::cout << "actionRNNHiddenSize = " << actionRNNHiddenSize << std::endl;
 
     std::cout << "verboseIter = " << verboseIter << std::endl;
     std::cout << "saveItermediate = " << saveIntermediate << std::endl;
@@ -204,10 +244,6 @@ public:
       std::cout << "testFile = " << testFiles[idx] << std::endl;
     }
     std::cout << "outBest = " << outBest << std::endl;
-    std::cout << "relu = " << relu << std::endl;
-    std::cout << "seg = " << seg << std::endl;
-    std::cout << "atomLayers = " << atomLayers << std::endl;
-    std::cout << "rnnLayers = " << rnnLayers << std::endl;
   }
 
   void load(const std::string& infile) {

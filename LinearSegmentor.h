@@ -10,9 +10,8 @@
 
 #include "N3L.h"
 
-#include "basic/LinearBeamSearcher.h"
+#include "LinearBeamSearcher.h"
 #include "Options.h"
-#include "State.h"
 #include "Pipe.h"
 #include "Utf.h"
 

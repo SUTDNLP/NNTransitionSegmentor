@@ -41,7 +41,7 @@ public:
     _lastAction.clear();
     _curFeat.clear();
     _score = 0.0;
-    _wordnum = -1;
+    _wordnum = 0;
   }
 
   CStateItem(const std::vector<std::string>* pCharacters) {
@@ -56,7 +56,7 @@ public:
     _lastAction.clear();
     _curFeat.clear();
     _score = 0.0;
-    _wordnum = -1;
+    _wordnum = 0;
   }
 
   virtual ~CStateItem(){
@@ -78,7 +78,7 @@ public:
     _lastAction.clear();
     _curFeat.clear();
     _score = 0.0;
-    _wordnum = -1;
+    _wordnum = 0;
   }
 
   void copyState(const CStateItem* from) {
@@ -141,7 +141,7 @@ public:
     next->_nextPosition = _nextPosition + 1;
     next->_pCharacters = _pCharacters;
     next->_characterSize = _characterSize;
-    next->_wordnum = _wordnum;
+    next->_wordnum = _wordnum + 1;
     next->_lastAction.set(CAction::FIN);
   }
 
@@ -270,6 +270,52 @@ public:
     return curoutstr.str();
   }
 
+};
+
+
+class CScoredStateAction {
+public:
+  CAction action;
+  const CStateItem *item;
+  dtype score;
+  Feature feat;
+
+public:
+  CScoredStateAction() :
+      item(0), action(-1), score(0) {
+    feat.setFeatureFormat(false);
+    feat.clear();
+  }
+
+
+public:
+  bool operator <(const CScoredStateAction &a1) const {
+    return score < a1.score;
+  }
+  bool operator >(const CScoredStateAction &a1) const {
+    return score > a1.score;
+  }
+  bool operator <=(const CScoredStateAction &a1) const {
+    return score <= a1.score;
+  }
+  bool operator >=(const CScoredStateAction &a1) const {
+    return score >= a1.score;
+  }
+
+
+};
+
+class CScoredStateAction_Compare {
+public:
+  int operator()(const CScoredStateAction &o1, const CScoredStateAction &o2) const {
+
+    if (o1.score < o2.score)
+      return -1;
+    else if (o1.score > o2.score)
+      return 1;
+    else
+      return 0;
+  }
 };
 
 

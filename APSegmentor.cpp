@@ -97,7 +97,7 @@ int Segmentor::createAlphabet(const vector<Instance>& vecInsts) {
   m_classifier.addToActionAlphabet(action_stat);
   m_classifier.addToWordAlphabet(word_stat, m_options.wordEmbFineTune ? m_options.wordCutOff : 0);
   m_classifier.addToCharAlphabet(char_stat, m_options.charEmbFineTune ? m_options.charCutOff : 0);
-  m_classifier.addToBiCharAlphabet(bichar_stat, m_options.tagEmbFineTune ? m_options.tagCutOff : 0);
+  m_classifier.addToBiCharAlphabet(bichar_stat, m_options.bicharEmbFineTune ? m_options.bicharCutOff : 0);
   m_classifier.addToFeatureAlphabet(feat_stat, m_options.featCutOff);
 
   cout << numInstance << " " << endl;
@@ -154,7 +154,7 @@ int Segmentor::addTestWordAlpha(const vector<Instance>& vecInsts) {
     m_classifier.addToWordAlphabet(word_stat, 0);
   if (!m_options.charEmbFineTune)
     m_classifier.addToCharAlphabet(char_stat, 0);
-  if (!m_options.tagEmbFineTune)
+  if (!m_options.bicharEmbFineTune)
     m_classifier.addToBiCharAlphabet(bichar_stat, 0);
 
   cout << "Remain word num: " << m_classifier.fe._wordAlphabet.size() << endl;

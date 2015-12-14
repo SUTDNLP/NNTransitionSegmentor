@@ -14,7 +14,6 @@
 #include <assert.h>
 #include "Feature.h"
 #include "FeatureExtraction.h"
-#include "Metric.h"
 #include "N3L.h"
 #include "State.h"
 #include "Action.h"
@@ -30,52 +29,6 @@ template<typename xpu>
 class APBeamSearcher {
 
 public:
-	class CScoredStateAction {
-	public:
-	  CAction action;
-	  const CStateItem *item;
-	  dtype score;
-	  Feature feat;
-
-	public:
-	  CScoredStateAction() :
-	      item(0), action(-1), score(0) {
-	    feat.setFeatureFormat(false);
-	    feat.clear();
-	  }
-
-
-	public:
-	  bool operator <(const CScoredStateAction &a1) const {
-	    return score < a1.score;
-	  }
-	  bool operator >(const CScoredStateAction &a1) const {
-	    return score > a1.score;
-	  }
-	  bool operator <=(const CScoredStateAction &a1) const {
-	    return score <= a1.score;
-	  }
-	  bool operator >=(const CScoredStateAction &a1) const {
-	    return score >= a1.score;
-	  }
-
-
-	};
-
-	class CScoredStateAction_Compare {
-	public:
-	  int operator()(const CScoredStateAction &o1, const CScoredStateAction &o2) const {
-
-	    if (o1.score < o2.score)
-	      return -1;
-	    else if (o1.score > o2.score)
-	      return 1;
-	    else
-	      return 0;
-	  }
-	};
-
-public:
   APBeamSearcher() {
     _dropOut = 0.5;
   }
@@ -83,7 +36,7 @@ public:
   }
 
 public:
-  AvgPerceptron1O<xpu> _layer_linear;
+  AvgPerceptron1O<xpu> _splayer_output;
 
   FeatureExtraction fe;
 
@@ -140,11 +93,11 @@ public:
   inline void init() {
     _linearfeatSize = 3 * fe._featAlphabet.size();
 
-    _layer_linear.initial(_linearfeatSize, 10);
+    _splayer_output.initial(_linearfeatSize, 10);
   }
 
   inline void release() {
-    _layer_linear.release();
+    _splayer_output.release();
   }
 
   dtype train(const std::vector<std::vector<string> >& sentences, const vector<vector<CAction> >& goldACs) {
@@ -210,7 +163,7 @@ public:
           scored_action.action = actions[tmp_j];
           scored_action.item = pGenerator;
           fe.extractFeature(pGenerator, actions[tmp_j], scored_action.feat);
-          _layer_linear.ComputeForwardScore(scored_action.feat._nSparseFeat, scored_action.score, true);
+          _splayer_output.ComputeForwardScore(scored_action.feat._nSparseFeat, scored_action.score, true);
           //std::cout << "add start, action = " << actions[tmp_j] << ", cur ac score = " << scored_action.score << ", orgin score = " << pGenerator->_score << std::endl;;
           scored_action.score += pGenerator->_score;
           beam.add_elem(scored_action);
@@ -329,13 +282,13 @@ public:
     }
     dtype delta = 0.0;
     dtype predscore, goldscore;
-    _layer_linear.ComputeForwardScore(pPredState->_curFeat._nSparseFeat, predscore, true);
-    _layer_linear.ComputeForwardScore(pGoldState->_curFeat._nSparseFeat, goldscore, true);
+    _splayer_output.ComputeForwardScore(pPredState->_curFeat._nSparseFeat, predscore, true);
+    _splayer_output.ComputeForwardScore(pGoldState->_curFeat._nSparseFeat, goldscore, true);
 
     delta = predscore - goldscore;
 
-    _layer_linear.ComputeBackwardLoss(pPredState->_curFeat._nSparseFeat, predLoss);
-    _layer_linear.ComputeBackwardLoss(pGoldState->_curFeat._nSparseFeat, goldLoss);
+    _splayer_output.ComputeBackwardLoss(pPredState->_curFeat._nSparseFeat, predLoss);
+    _splayer_output.ComputeBackwardLoss(pGoldState->_curFeat._nSparseFeat, goldLoss);
 
     //currently we use a uniform loss
     delta += backPropagationStates(pPredState->_prevState, pGoldState->_prevState, predLoss, goldLoss);
@@ -388,7 +341,7 @@ public:
           scored_action.action = actions[tmp_j];
           scored_action.item = pGenerator;
           fe.extractFeature(pGenerator, actions[tmp_j], scored_action.feat);
-          _layer_linear.ComputeForwardScore(scored_action.feat._nSparseFeat, scored_action.score);
+          _splayer_output.ComputeForwardScore(scored_action.feat._nSparseFeat, scored_action.score);
           scored_action.score += pGenerator->_score;
           beam.add_elem(scored_action);
         }
@@ -426,7 +379,7 @@ public:
   }
 
   void updateParams(dtype nnRegular, dtype adaAlpha, dtype adaEps) {
-    _layer_linear.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+    _splayer_output.updateAdaGrad(nnRegular, adaAlpha, adaEps);
   }
 
   void writeModel();
