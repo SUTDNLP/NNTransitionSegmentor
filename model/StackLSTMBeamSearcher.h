@@ -15,6 +15,7 @@
 #include "Feature.h"
 #include "DenseFeatureExtraction.h"
 #include "DenseFeature.h"
+#include "DenseFeatureChar.h"
 #include "N3L.h"
 #include "NeuralState.h"
 #include "Action.h"
@@ -255,6 +256,7 @@ public:
 		static CScoredStateAction<xpu> scored_action; // used rank actions
 		static CScoredStateAction<xpu> scored_correct_action;
 		static DenseFeature<xpu> pBestGenFeat, pGoldFeat;
+		static DenseFeatureChar<xpu> charFeat;
 
 		lattice_index[0] = lattice;
 		lattice_index[1] = lattice + 1;
@@ -266,53 +268,34 @@ public:
 		/*
 		 Add Character bi rnn  here
 		 */
-		vector<int> charIds(length), biCharIds(length);
-		Tensor<xpu, 3, dtype> charprime = NewTensor<xpu>(Shape3(length, 1, _charDim), d_zero);
-		Tensor<xpu, 3, dtype> bicharprime = NewTensor<xpu>(Shape3(length, 1, _biCharDim), d_zero);
-		Tensor<xpu, 3, dtype> charpre = NewTensor<xpu>(Shape3(length, 1, _charDim + _biCharDim), d_zero);
-		Tensor<xpu, 3, dtype> charpreMask = NewTensor<xpu>(Shape3(length, 1, _charDim + _biCharDim), d_zero);
-		Tensor<xpu, 3, dtype> charInput = NewTensor<xpu>(Shape3(length, 1, _charRepresentDim), d_zero);
-		Tensor<xpu, 3, dtype> charHidden = NewTensor<xpu>(Shape3(length, 1, _charHiddenSize), d_zero);
-		Tensor<xpu, 3, dtype> charLeftRNNHidden = NewTensor<xpu>(Shape3(length, 1, _charRNNHiddenSize), d_zero);
-		Tensor<xpu, 3, dtype> charRightRNNHidden = NewTensor<xpu>(Shape3(length, 1, _charRNNHiddenSize), d_zero);
-		Tensor<xpu, 2, dtype> charRNNHiddenDummy = NewTensor<xpu>(Shape2(1, _charRNNHiddenSize), d_zero);
-
-		Tensor<xpu, 3, dtype> charprime_Loss = NewTensor<xpu>(Shape3(length, 1, _charDim), d_zero);
-		Tensor<xpu, 3, dtype> bicharprime_Loss = NewTensor<xpu>(Shape3(length, 1, _biCharDim), d_zero);
-		Tensor<xpu, 3, dtype> charpre_Loss = NewTensor<xpu>(Shape3(length, 1, _charDim + _biCharDim), d_zero);
-		Tensor<xpu, 3, dtype> charInput_Loss = NewTensor<xpu>(Shape3(length, 1, _charRepresentDim), d_zero);
-		Tensor<xpu, 3, dtype> charHidden_Loss = NewTensor<xpu>(Shape3(length, 1, _charHiddenSize), d_zero);
-		Tensor<xpu, 3, dtype> charLeftRNNHidden_Loss = NewTensor<xpu>(Shape3(length, 1, _charRNNHiddenSize), d_zero);
-		Tensor<xpu, 3, dtype> charRightRNNHidden_Loss = NewTensor<xpu>(Shape3(length, 1, _charRNNHiddenSize), d_zero);
-		Tensor<xpu, 2, dtype> charRNNHiddenDummy_Loss = NewTensor<xpu>(Shape2(1, _charRNNHiddenSize), d_zero);
-
+		charFeat.init(length, _charDim, _biCharDim, _charcontext, _charHiddenSize, _charRNNHiddenSize, true);
 		int unknownCharID = fe._charAlphabet[fe.unknownkey];
 		for (int idx = 0; idx < length; idx++) {
-			charIds[idx] = fe._charAlphabet[sentence[idx]];
-			if (charIds[idx] < 0)
-				charIds[idx] = unknownCharID;
+			charFeat._charIds[idx] = fe._charAlphabet[sentence[idx]];
+			if (charFeat._charIds[idx] < 0)
+				charFeat._charIds[idx] = unknownCharID;
 		}
 
 		int unknownBiCharID = fe._bicharAlphabet[fe.unknownkey];
 		for (int idx = 0; idx < length; idx++) {
-			biCharIds[idx] = idx < length - 1 ? fe._bicharAlphabet[sentence[idx] + sentence[idx + 1]] : fe._bicharAlphabet[sentence[idx] + fe.nullkey];
-			if (biCharIds[idx] < 0)
-				biCharIds[idx] = unknownBiCharID;
+			charFeat._bicharIds[idx] = idx < length - 1 ? fe._bicharAlphabet[sentence[idx] + sentence[idx + 1]] : fe._bicharAlphabet[sentence[idx] + fe.nullkey];
+			if (charFeat._bicharIds[idx] < 0)
+				charFeat._bicharIds[idx] = unknownBiCharID;
 		}
 
 		for (int idx = 0; idx < length; idx++) {
-			_chars.GetEmb(charIds[idx], charprime[idx]);
-			_bichars.GetEmb(biCharIds[idx], bicharprime[idx]);
-			concat(charprime[idx], bicharprime[idx], charpre[idx]);
-			dropoutcol(charpreMask[idx], _dropOut);
-			charpre[idx] = charpre[idx] * charpreMask[idx];
+			_chars.GetEmb(charFeat._charIds[idx], charFeat._charprime[idx]);
+			_bichars.GetEmb(charFeat._bicharIds[idx], charFeat._bicharprime[idx]);
+			concat(charFeat._charprime[idx], charFeat._bicharprime[idx], charFeat._charpre[idx]);
+			dropoutcol(charFeat._charpreMask[idx], _dropOut);
+			charFeat._charpre[idx] = charFeat._charpre[idx] * charFeat._charpreMask[idx];
 		}
 
-		windowlized(charpre, charInput, _charcontext);
+		windowlized(charFeat._charpre, charFeat._charInput, _charcontext);
 
-		_nnlayer_char_hidden.ComputeForwardScore(charInput, charHidden);
-		_char_left_rnn.ComputeForwardScore(charHidden, charLeftRNNHidden);
-		_char_right_rnn.ComputeForwardScore(charHidden, charRightRNNHidden);
+		_nnlayer_char_hidden.ComputeForwardScore(charFeat._charInput, charFeat._charHidden);
+		_char_left_rnn.ComputeForwardScore(charFeat._charHidden, charFeat._charLeftRNNHidden);
+		_char_right_rnn.ComputeForwardScore(charFeat._charHidden, charFeat._charRightRNNHidden);
 
 		correctState = lattice_index[0];
 
@@ -376,16 +359,16 @@ public:
 
 						//
 						if (pGenerator->_nextPosition < length) {
-							concat(scored_action.nnfeat._wordRNNHidden, scored_action.nnfeat._actionRNNHidden, charLeftRNNHidden[pGenerator->_nextPosition],
-									charRightRNNHidden[pGenerator->_nextPosition], scored_action.nnfeat._sepInHidden);
+							concat(scored_action.nnfeat._wordRNNHidden, scored_action.nnfeat._actionRNNHidden, charFeat._charLeftRNNHidden[pGenerator->_nextPosition],
+									charFeat._charRightRNNHidden[pGenerator->_nextPosition], scored_action.nnfeat._sepInHidden);
 						} else {
-							concat(scored_action.nnfeat._wordRNNHidden, scored_action.nnfeat._actionRNNHidden, charRNNHiddenDummy, charRNNHiddenDummy,
+							concat(scored_action.nnfeat._wordRNNHidden, scored_action.nnfeat._actionRNNHidden, charFeat._charRNNHiddenDummy, charFeat._charRNNHiddenDummy,
 									scored_action.nnfeat._sepInHidden);
 						}
 						_nnlayer_sep_hidden.ComputeForwardScore(scored_action.nnfeat._sepInHidden, scored_action.nnfeat._sepOutHidden);
 						_nnlayer_sep_output.ComputeForwardScore(scored_action.nnfeat._sepOutHidden, score);
 					} else {
-						concat(scored_action.nnfeat._actionRNNHidden, charLeftRNNHidden[pGenerator->_nextPosition], charRightRNNHidden[pGenerator->_nextPosition],
+						concat(scored_action.nnfeat._actionRNNHidden, charFeat._charLeftRNNHidden[pGenerator->_nextPosition], charFeat._charRightRNNHidden[pGenerator->_nextPosition],
 								scored_action.nnfeat._appInHidden);
 						_nnlayer_app_hidden.ComputeForwardScore(scored_action.nnfeat._appInHidden, scored_action.nnfeat._appOutHidden);
 						_nnlayer_app_output.ComputeForwardScore(scored_action.nnfeat._appOutHidden, score);
@@ -471,10 +454,23 @@ public:
 						_actionRNNHiddenSize);
 				pGoldFeat.init(correctState->_wordnum, index, _wordDim, _wordNgram, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize,
 						_actionRNNHiddenSize);
-				backPropagationStates(pBestGen, correctState, 1.0, -1.0, charLeftRNNHidden_Loss, charRightRNNHidden_Loss, charRNNHiddenDummy_Loss, pBestGenFeat,
+				backPropagationStates(pBestGen, correctState, 1.0, -1.0, charFeat._charLeftRNNHidden_Loss, charFeat._charRightRNNHidden_Loss, charFeat._charRNNHiddenDummy_Loss, pBestGenFeat,
 						pGoldFeat);
+
+				_char_left_rnn.ComputeBackwardLoss(charFeat._charHidden, charFeat._charLeftRNNHidden, charFeat._charLeftRNNHidden_Loss, charFeat._charHidden_Loss);
+				_char_right_rnn.ComputeBackwardLoss(charFeat._charHidden, charFeat._charRightRNNHidden, charFeat._charRightRNNHidden_Loss, charFeat._charHidden_Loss);
+				_nnlayer_char_hidden.ComputeBackwardLoss(charFeat._charInput, charFeat._charHidden, charFeat._charHidden_Loss, charFeat._charInput_Loss);
+				windowlized_backward(charFeat._charpre_Loss, charFeat._charInput_Loss, _charcontext);
+				charFeat._charpre_Loss = charFeat._charpre_Loss * charFeat._charpreMask;
+
+				for(int idx = 0; idx < length; idx++){
+					unconcat(charFeat._charprime_Loss[idx], charFeat._bicharprime_Loss[idx], charFeat._charpre_Loss[idx]);
+					_chars.EmbLoss(charFeat._charIds[idx], charFeat._charprime_Loss[idx]);
+					_bichars.EmbLoss(charFeat._bicharIds[idx], charFeat._bicharprime_Loss[idx]);
+				}
 				pBestGenFeat.clear();
 				pGoldFeat.clear();
+				charFeat.clear();
 
 				_eval.correct_label_count += index;
 				_eval.overall_label_count += length + 1;
@@ -498,11 +494,25 @@ public:
 			//std::cout << "gold:" << correctState->str() << std::endl;
 			pBestGenFeat.init(pBestGen->_wordnum, index, _wordDim, _wordNgram, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize, _actionRNNHiddenSize);
 			pGoldFeat.init(correctState->_wordnum, index, _wordDim, _wordNgram, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize, _actionRNNHiddenSize);
-			backPropagationStates(pBestGen, correctState, 1.0, -1.0, charLeftRNNHidden_Loss, charRightRNNHidden_Loss, charRNNHiddenDummy_Loss, pBestGenFeat,
+			backPropagationStates(pBestGen, correctState, 1.0, -1.0, charFeat._charLeftRNNHidden_Loss, charFeat._charRightRNNHidden_Loss, charFeat._charRNNHiddenDummy_Loss, pBestGenFeat,
 					pGoldFeat);
 			pBestGenFeat.clear();
 			pGoldFeat.clear();
 
+			_char_left_rnn.ComputeBackwardLoss(charFeat._charHidden, charFeat._charLeftRNNHidden, charFeat._charLeftRNNHidden_Loss, charFeat._charHidden_Loss);
+			_char_right_rnn.ComputeBackwardLoss(charFeat._charHidden, charFeat._charRightRNNHidden, charFeat._charRightRNNHidden_Loss, charFeat._charHidden_Loss);
+			_nnlayer_char_hidden.ComputeBackwardLoss(charFeat._charInput, charFeat._charHidden, charFeat._charHidden_Loss, charFeat._charInput_Loss);
+			windowlized_backward(charFeat._charpre_Loss, charFeat._charInput_Loss, _charcontext);
+			charFeat._charpre_Loss = charFeat._charpre_Loss * charFeat._charpreMask;
+
+			for(int idx = 0; idx < length; idx++){
+				unconcat(charFeat._charprime_Loss[idx], charFeat._bicharprime_Loss[idx], charFeat._charpre_Loss[idx]);
+				_chars.EmbLoss(charFeat._charIds[idx], charFeat._charprime_Loss[idx]);
+				_bichars.EmbLoss(charFeat._bicharIds[idx], charFeat._bicharprime_Loss[idx]);
+			}
+			pBestGenFeat.clear();
+			pGoldFeat.clear();
+			charFeat.clear();
 			_eval.correct_label_count += length;
 			_eval.overall_label_count += length + 1;
 		} else {
@@ -524,6 +534,47 @@ public:
 		static int position, word_position;
 
 		if (pPredState->_nextPosition == 0) {
+			//predState
+			_word_increased_rnn.ComputeBackwardLoss(predDenseFeature._wordHidden, predDenseFeature._wordRNNHidden, predDenseFeature._wordRNNHiddenLoss, predDenseFeature._wordHiddenLoss);
+			_nnlayer_word_hidden.ComputeBackwardLoss(predDenseFeature._wordRep, predDenseFeature._wordHidden, predDenseFeature._wordHiddenLoss, predDenseFeature._wordRepLoss);
+			for(int idx = 0; idx < predDenseFeature._wordRepLoss.size(); idx++){
+				unconcat(predDenseFeature._wordPrimeLoss[idx], predDenseFeature._wordRepLoss[idx]);
+				predDenseFeature._wordPrimeLoss[idx] = predDenseFeature._wordPrimeLoss[idx] * predDenseFeature._wordPrimeMask[idx];
+				for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
+					_words.EmbLoss(predDenseFeature._wordIds[idx][tmp_k], predDenseFeature._wordPrimeLoss[idx][tmp_k]);
+				}
+			}
+
+			_action_increased_rnn.ComputeBackwardLoss(predDenseFeature._actionHidden, predDenseFeature._actionRNNHidden, predDenseFeature._actionRNNHiddenLoss, predDenseFeature._actionHiddenLoss);
+			_nnlayer_action_hidden.ComputeBackwardLoss(predDenseFeature._actionRep, predDenseFeature._actionHidden, predDenseFeature._actionHiddenLoss, predDenseFeature._actionRepLoss);
+			for(int idx = 0; idx < predDenseFeature._actionRepLoss.size(); idx++){
+				unconcat(predDenseFeature._actionPrimeLoss[idx], predDenseFeature._actionRepLoss[idx]);
+				predDenseFeature._actionPrimeLoss[idx] = predDenseFeature._actionPrimeLoss[idx] * predDenseFeature._actionPrimeMask[idx];
+				for (int tmp_k = 0; tmp_k < _actionNgram; tmp_k++) {
+					_actions.EmbLoss(predDenseFeature._actionIds[idx][tmp_k], predDenseFeature._actionPrimeLoss[idx][tmp_k]);
+				}
+			}
+
+			//goldState
+			_word_increased_rnn.ComputeBackwardLoss(goldDenseFeature._wordHidden, goldDenseFeature._wordRNNHidden, goldDenseFeature._wordRNNHiddenLoss, goldDenseFeature._wordHiddenLoss);
+			_nnlayer_word_hidden.ComputeBackwardLoss(goldDenseFeature._wordRep, goldDenseFeature._wordHidden, goldDenseFeature._wordHiddenLoss, goldDenseFeature._wordRepLoss);
+			for(int idx = 0; idx < goldDenseFeature._wordRepLoss.size(); idx++){
+				unconcat(goldDenseFeature._wordPrimeLoss[idx], goldDenseFeature._wordRepLoss[idx]);
+				goldDenseFeature._wordPrimeLoss[idx] = goldDenseFeature._wordPrimeLoss[idx] * goldDenseFeature._wordPrimeMask[idx];
+				for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
+					_words.EmbLoss(goldDenseFeature._wordIds[idx][tmp_k], goldDenseFeature._wordPrimeLoss[idx][tmp_k]);
+				}
+			}
+
+			_action_increased_rnn.ComputeBackwardLoss(goldDenseFeature._actionHidden, goldDenseFeature._actionRNNHidden, goldDenseFeature._actionRNNHiddenLoss, goldDenseFeature._actionHiddenLoss);
+			_nnlayer_action_hidden.ComputeBackwardLoss(goldDenseFeature._actionRep, goldDenseFeature._actionHidden, goldDenseFeature._actionHiddenLoss, goldDenseFeature._actionRepLoss);
+			for(int idx = 0; idx < goldDenseFeature._actionRepLoss.size(); idx++){
+				unconcat(goldDenseFeature._actionPrimeLoss[idx], goldDenseFeature._actionRepLoss[idx]);
+				goldDenseFeature._actionPrimeLoss[idx] = goldDenseFeature._actionPrimeLoss[idx] * goldDenseFeature._actionPrimeMask[idx];
+				for (int tmp_k = 0; tmp_k < _actionNgram; tmp_k++) {
+					_actions.EmbLoss(goldDenseFeature._actionIds[idx][tmp_k], goldDenseFeature._actionPrimeLoss[idx][tmp_k]);
+				}
+			}
 
 			return;
 		}
@@ -608,7 +659,7 @@ public:
 			tcopy(pPredState->_nnfeat._wordRNNHidden, predDenseFeature._wordRNNHidden[word_position]);
 
 			for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
-				predDenseFeature._words[word_position][tmp_k] = pPredState->_curFeat._nWordFeat[tmp_k];
+				predDenseFeature._wordIds[word_position][tmp_k] = pPredState->_curFeat._nWordFeat[tmp_k];
 			}
 		}
 
@@ -618,7 +669,7 @@ public:
 		tcopy(pPredState->_nnfeat._actionHidden, predDenseFeature._actionHidden[position]);
 		tcopy(pPredState->_nnfeat._actionRNNHidden, predDenseFeature._actionRNNHidden[position]);
 		for (int tmp_k = 0; tmp_k < _actionNgram; tmp_k++) {
-			predDenseFeature._actions[position][tmp_k] = pPredState->_curFeat._nActionFeat[tmp_k];
+			predDenseFeature._actionIds[position][tmp_k] = pPredState->_curFeat._nActionFeat[tmp_k];
 		}
 
 		//goldState
@@ -630,7 +681,7 @@ public:
 			tcopy(pGoldState->_nnfeat._wordRNNHidden, goldDenseFeature._wordRNNHidden[word_position]);
 
 			for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
-				goldDenseFeature._words[word_position][tmp_k] = pGoldState->_curFeat._nWordFeat[tmp_k];
+				goldDenseFeature._wordIds[word_position][tmp_k] = pGoldState->_curFeat._nWordFeat[tmp_k];
 			}
 		}
 
@@ -640,7 +691,7 @@ public:
 		tcopy(pGoldState->_nnfeat._actionHidden, goldDenseFeature._actionHidden[position]);
 		tcopy(pGoldState->_nnfeat._actionRNNHidden, goldDenseFeature._actionRNNHidden[position]);
 		for (int tmp_k = 0; tmp_k < _actionNgram; tmp_k++) {
-			goldDenseFeature._actions[position][tmp_k] = pGoldState->_curFeat._nActionFeat[tmp_k];
+			goldDenseFeature._actionIds[position][tmp_k] = pGoldState->_curFeat._nActionFeat[tmp_k];
 		}
 
 		//currently we use a uniform loss
@@ -668,6 +719,7 @@ public:
 		static NRHeap<CScoredStateAction<xpu>, CScoredStateAction_Compare<xpu> > beam(BEAM_SIZE);
 		static CScoredStateAction<xpu> scored_action; // used rank actions
 		static Feature feat;
+		static DenseFeatureChar<xpu> charFeat;
 
 		lattice_index[0] = lattice;
 		lattice_index[1] = lattice + 1;
@@ -679,41 +731,34 @@ public:
 		/*
 		 Add Character bi rnn  here
 		 */
-		vector<int> charIds(length), biCharIds(length);
-		Tensor<xpu, 3, dtype> charprime = NewTensor<xpu>(Shape3(length, 1, _charDim), d_zero);
-		Tensor<xpu, 3, dtype> bicharprime = NewTensor<xpu>(Shape3(length, 1, _charDim), d_zero);
-		Tensor<xpu, 3, dtype> charpre = NewTensor<xpu>(Shape3(length, 1, _charDim + _biCharDim), d_zero);
-		Tensor<xpu, 3, dtype> charInput = NewTensor<xpu>(Shape3(length, 1, _charRepresentDim), d_zero);
-		Tensor<xpu, 3, dtype> charHidden = NewTensor<xpu>(Shape3(length, 1, _charHiddenSize), d_zero);
-		Tensor<xpu, 3, dtype> charLeftRNNHidden = NewTensor<xpu>(Shape3(length, 1, _charRNNHiddenSize), d_zero);
-		Tensor<xpu, 3, dtype> charRightRNNHidden = NewTensor<xpu>(Shape3(length, 1, _charRNNHiddenSize), d_zero);
-		Tensor<xpu, 2, dtype> charRNNHiddenDummy = NewTensor<xpu>(Shape2(1, _charRNNHiddenSize), d_zero);
-
+		charFeat.init(length, _charDim, _biCharDim, _charcontext, _charHiddenSize, _charRNNHiddenSize, true);
 		int unknownCharID = fe._charAlphabet[fe.unknownkey];
 		for (int idx = 0; idx < length; idx++) {
-			charIds[idx] = fe._charAlphabet[sentence[idx]];
-			if (charIds[idx] < 0)
-				charIds[idx] = unknownCharID;
+			charFeat._charIds[idx] = fe._charAlphabet[sentence[idx]];
+			if (charFeat._charIds[idx] < 0)
+				charFeat._charIds[idx] = unknownCharID;
 		}
 
 		int unknownBiCharID = fe._bicharAlphabet[fe.unknownkey];
 		for (int idx = 0; idx < length; idx++) {
-			biCharIds[idx] = idx < length - 1 ? fe._bicharAlphabet[sentence[idx] + sentence[idx + 1]] : fe._bicharAlphabet[sentence[idx] + fe.nullkey];
-			if (biCharIds[idx] < 0)
-				biCharIds[idx] = unknownBiCharID;
+			charFeat._bicharIds[idx] = idx < length - 1 ? fe._bicharAlphabet[sentence[idx] + sentence[idx + 1]] : fe._bicharAlphabet[sentence[idx] + fe.nullkey];
+			if (charFeat._bicharIds[idx] < 0)
+				charFeat._bicharIds[idx] = unknownBiCharID;
 		}
 
 		for (int idx = 0; idx < length; idx++) {
-			_chars.GetEmb(charIds[idx], charprime[idx]);
-			_bichars.GetEmb(biCharIds[idx], bicharprime[idx]);
-			concat(charprime[idx], bicharprime[idx], charpre[idx]);
+			_chars.GetEmb(charFeat._charIds[idx], charFeat._charprime[idx]);
+			_bichars.GetEmb(charFeat._bicharIds[idx], charFeat._bicharprime[idx]);
+			concat(charFeat._charprime[idx], charFeat._bicharprime[idx], charFeat._charpre[idx]);
+			dropoutcol(charFeat._charpreMask[idx], _dropOut);
+			charFeat._charpre[idx] = charFeat._charpre[idx] * charFeat._charpreMask[idx];
 		}
 
-		windowlized(charpre, charInput, _charcontext);
+		windowlized(charFeat._charpre, charFeat._charInput, _charcontext);
 
-		_nnlayer_char_hidden.ComputeForwardScore(charInput, charHidden);
-		_char_left_rnn.ComputeForwardScore(charHidden, charLeftRNNHidden);
-		_char_right_rnn.ComputeForwardScore(charHidden, charRightRNNHidden);
+		_nnlayer_char_hidden.ComputeForwardScore(charFeat._charInput, charFeat._charHidden);
+		_char_left_rnn.ComputeForwardScore(charFeat._charHidden, charFeat._charLeftRNNHidden);
+		_char_right_rnn.ComputeForwardScore(charFeat._charHidden, charFeat._charRightRNNHidden);
 
 		while (true) {
 			++index;
@@ -767,16 +812,16 @@ public:
 
 						//
 						if (pGenerator->_nextPosition < length) {
-							concat(scored_action.nnfeat._wordRNNHidden, scored_action.nnfeat._actionRNNHidden, charLeftRNNHidden[pGenerator->_nextPosition],
-									charRightRNNHidden[pGenerator->_nextPosition], scored_action.nnfeat._sepInHidden);
+							concat(scored_action.nnfeat._wordRNNHidden, scored_action.nnfeat._actionRNNHidden, charFeat._charLeftRNNHidden[pGenerator->_nextPosition],
+									charFeat._charRightRNNHidden[pGenerator->_nextPosition], scored_action.nnfeat._sepInHidden);
 						} else {
-							concat(scored_action.nnfeat._wordRNNHidden, scored_action.nnfeat._actionRNNHidden, charRNNHiddenDummy, charRNNHiddenDummy,
+							concat(scored_action.nnfeat._wordRNNHidden, scored_action.nnfeat._actionRNNHidden, charFeat._charRNNHiddenDummy, charFeat._charRNNHiddenDummy,
 									scored_action.nnfeat._sepInHidden);
 						}
 						_nnlayer_sep_hidden.ComputeForwardScore(scored_action.nnfeat._sepInHidden, scored_action.nnfeat._sepOutHidden);
 						_nnlayer_sep_output.ComputeForwardScore(scored_action.nnfeat._sepOutHidden, score);
 					} else {
-						concat(scored_action.nnfeat._actionRNNHidden, charLeftRNNHidden[pGenerator->_nextPosition], charRightRNNHidden[pGenerator->_nextPosition],
+						concat(scored_action.nnfeat._actionRNNHidden, charFeat._charLeftRNNHidden[pGenerator->_nextPosition], charFeat._charRightRNNHidden[pGenerator->_nextPosition],
 								scored_action.nnfeat._appInHidden);
 						_nnlayer_app_hidden.ComputeForwardScore(scored_action.nnfeat._appInHidden, scored_action.nnfeat._appOutHidden);
 						_nnlayer_app_output.ComputeForwardScore(scored_action.nnfeat._appOutHidden, score);
@@ -816,11 +861,31 @@ public:
 		}
 		pBestGen->getSegResults(words);
 
+		charFeat.clear();
+
 		return true;
 	}
 
 	void updateParams(dtype nnRegular, dtype adaAlpha, dtype adaEps) {
 		_splayer_output.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+
+		_nnlayer_sep_output.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_nnlayer_app_output.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+
+		_words.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_chars.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_bichars.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_actions.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+
+		_char_left_rnn.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_char_right_rnn.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_word_increased_rnn.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_action_increased_rnn.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_nnlayer_sep_hidden.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_nnlayer_app_hidden.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_nnlayer_word_hidden.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_nnlayer_char_hidden.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_nnlayer_action_hidden.updateAdaGrad(nnRegular, adaAlpha, adaEps);
 	}
 
 	void writeModel();

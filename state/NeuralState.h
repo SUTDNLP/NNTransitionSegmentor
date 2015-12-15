@@ -8,7 +8,7 @@
 #ifndef SEG_NEURALSTATE_H_
 #define SEG_NEURALSTATE_H_
 
-#include "../feature/DenseFeatureForward.h"
+#include "DenseFeatureForward.h"
 #include "Feature.h"
 #include "Action.h"
 

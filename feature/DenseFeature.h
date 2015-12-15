@@ -14,7 +14,7 @@ template<typename xpu>
 class DenseFeature {
 public:
 	//all state inter dependent features
-	vector<vector<int> > _words, _actions;
+	vector<vector<int> > _wordIds, _actionIds;
 	vector<Tensor<xpu, 3, dtype> > _wordPrime, _wordPrimeLoss, _wordPrimeMask;
 	vector<Tensor<xpu, 3, dtype> > _actionPrime, _actionPrimeLoss, _actionPrimeMask;
 	vector<Tensor<xpu, 2, dtype> > _wordRep, _wordRepLoss;
@@ -30,6 +30,7 @@ public:
 public:
 	DenseFeature() {
 		_steps = 0;
+		_wordnum = 0;
 	}
 
 	~DenseFeature() {
@@ -39,13 +40,15 @@ public:
 public:
 	inline void init(int wordnum, int steps, int wordDim, int wordNgram, int wordHiddenDim, int wordRNNDim,
 			int actionDim, int actionNgram, int actionHiddenDim, int actionRNNDim) {
+
+		clear();
 		_steps = steps;
 		_wordnum = wordnum;
 
 		if(wordnum > 0){
-			_words.resize(wordnum);
+			_wordIds.resize(wordnum);
 			for (int idx = 0; idx < wordnum; idx++) {
-				_words[idx].resize(wordNgram);
+				_wordIds[idx].resize(wordNgram);
 				_wordPrime[idx] = NewTensor<xpu>(Shape3(wordNgram, 1, wordDim), d_zero);
 				_wordRep[idx] = NewTensor<xpu>(Shape2(1, wordNgram * wordDim), d_zero);
 				_wordHidden[idx] = NewTensor<xpu>(Shape2(1, wordHiddenDim), d_zero);
@@ -61,9 +64,9 @@ public:
 		}
 
 		if(steps > 0) {
-			_actions.resize(steps);
+			_actionIds.resize(steps);
 			for (int idx = 0; idx < steps; idx++) {
-				_actions[idx].resize(actionNgram);
+				_actionIds[idx].resize(actionNgram);
 				_actionPrime[idx] = NewTensor<xpu>(Shape3(actionNgram, 1, actionDim), d_zero);
 				_actionRep[idx] = NewTensor<xpu>(Shape2(1, actionNgram * actionDim), d_zero);
 				_actionHidden[idx] = NewTensor<xpu>(Shape2(1, actionHiddenDim), d_zero);
@@ -81,6 +84,7 @@ public:
 
 	inline void clear() {
 		for (int idx = 0; idx < _wordnum; idx++) {
+			_wordIds[idx].clear();
 			FreeSpace(&(_wordPrime[idx]));
 			FreeSpace(&(_wordRep[idx]));
 			FreeSpace(&(_wordHidden[idx]));
@@ -92,8 +96,10 @@ public:
 			FreeSpace(&(_wordHiddenLoss[idx]));
 			FreeSpace(&(_wordRNNHiddenLoss[idx]));
 		}
+		_wordIds.clear();
 
 		for (int idx = 0; idx < _steps; idx++) {
+			_actionIds[idx].clear();
 			FreeSpace(&(_actionPrime[idx]));
 			FreeSpace(&(_actionRep[idx]));
 			FreeSpace(&(_actionHidden[idx]));
@@ -105,6 +111,9 @@ public:
 			FreeSpace(&(_actionHiddenLoss[idx]));
 			FreeSpace(&(_actionRNNHiddenLoss[idx]));
 		}
+		_actionIds.clear();
+		_wordnum = 0;
+		_steps = 0;
 	}
 
 

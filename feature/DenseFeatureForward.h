@@ -45,6 +45,7 @@ public:
 			int actionDim,int actionNgram,  int actionHiddenDim, int actionRNNDim,
 			int sepInHiddenDim, int appInHiddenDim, int sepOutHiddenDim, int appOutHiddenDim,
 			bool bTrain = false) {
+		clear();
 		_wordPrime = NewTensor<xpu>(Shape3(wordNgram, 1,  wordDim), d_zero);
 		_wordRep = NewTensor<xpu>(Shape2(1, wordNgram * wordDim), d_zero);
 		_wordHidden = NewTensor<xpu>(Shape2(1, wordHiddenDim), d_zero);
@@ -108,6 +109,7 @@ public:
 			}
 
 			_bAllocated = false;
+			_bTrain = false;
 		}
 	}
 
