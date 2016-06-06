@@ -1,7 +1,7 @@
 /*
  * FeatureExtraction.h
  *
- *  Created on: Oct 7, 2015
+ *  Created on: Jan 25, 2016
  *      Author: mszhang
  */
 
@@ -24,6 +24,7 @@ public:
 public:
 	Alphabet _featAlphabet;
 	Alphabet _wordAlphabet;
+	Alphabet _allwordAlphabet;
 	Alphabet _charAlphabet;
 	Alphabet _bicharAlphabet;
 	Alphabet _actionAlphabet;
@@ -60,12 +61,14 @@ public:
 		if (alphaIncreasing) {
 			_featAlphabet.set_fixed_flag(false);
 			_wordAlphabet.set_fixed_flag(false);
+			_allwordAlphabet.set_fixed_flag(false);
 			_charAlphabet.set_fixed_flag(false);
 			_bicharAlphabet.set_fixed_flag(false);
 			_actionAlphabet.set_fixed_flag(false);
 		} else {
 			_featAlphabet.set_fixed_flag(true);
 			_wordAlphabet.set_fixed_flag(true);
+			_allwordAlphabet.set_fixed_flag(true);
 			_charAlphabet.set_fixed_flag(true);
 			_bicharAlphabet.set_fixed_flag(true);
 			_actionAlphabet.set_fixed_flag(true);
@@ -114,18 +117,42 @@ public:
 				feat._nWordFeat.resize(wordNgram);
 				unknownID = _wordAlphabet[unknownkey];
 				for (int idx = 0; idx < wordNgram; idx++) {
-					featId = idx < feat._strWordFeat.size() ? _wordAlphabet[feat._strWordFeat[idx]] : _wordAlphabet[nullkey];
+					featId = idx < feat._strWordFeat.size() ? _wordAlphabet[normalize_to_lowerwithdigit(feat._strWordFeat[idx])] : _wordAlphabet[nullkey];
 					if (featId < 0)
 						featId = unknownID;
 					feat._nWordFeat[idx] = featId;
 				}
+				
+				feat._nAllWordFeat.resize(wordNgram);
+				unknownID = _allwordAlphabet[unknownkey];
+				for (int idx = 0; idx < wordNgram; idx++) {
+					featId = idx < feat._strWordFeat.size() ? _allwordAlphabet[feat._strWordFeat[idx]] : _allwordAlphabet[nullkey];
+					if (featId < 0)
+						featId = unknownID;
+					feat._nAllWordFeat[idx] = featId;
+				}
+								
 				feat._strWordFeat.clear();
+
+				for(int idx = feat._nWordLengths.size(); idx < wordNgram; idx++){
+					feat._nWordLengths.push_back(0);
+				}
+
+				feat._nKeyChars.resize(2 * wordNgram + 1);
+				for (int idx = 0; idx < 2 * wordNgram + 1; idx++) {
+					featId = idx < feat._strKeyChars.size() ? _charAlphabet[feat._strKeyChars[idx]] : _charAlphabet[nullkey];
+					if (featId < 0)
+						featId = unknownID;
+					feat._nKeyChars[idx] = featId;
+				}
+
 			}
 
 			if (actionNgram > 0) {
 				feat._nActionFeat.resize(actionNgram);
 				for (int idx = 0; idx < actionNgram; idx++) {
 					featId = idx < feat._strActionFeat.size() ? _actionAlphabet[feat._strActionFeat[idx]] : _actionAlphabet[nullkey];
+					if(featId == -1) featId = 0; //noAction
 					feat._nActionFeat[idx] = featId;
 				}
 				feat._strActionFeat.clear();
@@ -154,6 +181,17 @@ public:
 		}
 		_wordAlphabet.set_fixed_flag(true);
 	}
+	
+	void addToAllWordAlphabet(hash_map<string, int> allword_stat, int allwordCutOff = 0) {
+		_allwordAlphabet.set_fixed_flag(false);
+		hash_map<string, int>::iterator allword_iter;
+		for (allword_iter = allword_stat.begin(); allword_iter != allword_stat.end(); allword_iter++) {
+			if (allword_iter->second > allwordCutOff) {
+				_allwordAlphabet.from_string(allword_iter->first);
+			}
+		}
+		_allwordAlphabet.set_fixed_flag(true);
+	}		
 
 	void addToCharAlphabet(hash_map<string, int> char_stat, int charCutOff = 0) {
 		_charAlphabet.set_fixed_flag(false);
@@ -195,6 +233,11 @@ public:
 		_wordAlphabet.from_string(nullkey);
 		_wordAlphabet.from_string(unknownkey);
 		_wordAlphabet.set_fixed_flag(true);
+		
+		_allwordAlphabet.clear();
+		_allwordAlphabet.from_string(nullkey);
+		_allwordAlphabet.from_string(unknownkey);
+		_allwordAlphabet.set_fixed_flag(true);
 
 		_charAlphabet.clear();
 		_charAlphabet.from_string(nullkey);
@@ -382,12 +425,23 @@ protected:
 
 		ngram = 0;
 
+		feat._strKeyChars.push_back(nextChar);
 		if (ngram < wordNgram) {
 			feat._strWordFeat.push_back(curWord);
+			feat._strKeyChars.push_back(curWordLastChar);
+			feat._strKeyChars.push_back(curWordFirstChar);
+			length = curState->_lastWordEnd == -1 ?  0 : curState->_lastWordEnd - curState->_lastWordStart + 1;
+			if(length > 5) length = 5;
+			feat._nWordLengths.push_back(length);
 			ngram++;
 			const CStateItem<xpu>* theState = preStackState;
 			while (theState != NULL && theState->_lastWordEnd >= 0 && ngram < actionNgram) {
 				feat._strWordFeat.push_back(theState->_strlastWord);
+				feat._strKeyChars.push_back(pCharacters->at(theState->_lastWordEnd));
+				feat._strKeyChars.push_back(pCharacters->at(theState->_lastWordEnd));
+				length = theState->_lastWordEnd - theState->_lastWordStart + 1;
+				if(length > 5) length = 5;
+				feat._nWordLengths.push_back(length);
 				theState = theState->_prevStackState;
 				ngram++;
 			}
@@ -506,12 +560,23 @@ protected:
 
 		ngram = 0;
 
+		feat._strKeyChars.push_back(nullkey);
 		if (ngram < wordNgram) {
 			feat._strWordFeat.push_back(curWord);
+			feat._strKeyChars.push_back(curWordLastChar);
+			feat._strKeyChars.push_back(curWordFirstChar);
+			length = curState->_lastWordEnd == -1 ?  0 : curState->_lastWordEnd - curState->_lastWordStart + 1;
+			if(length > 5) length = 5;
+			feat._nWordLengths.push_back(length);
 			ngram++;
 			const CStateItem<xpu>* theState = preStackState;
 			while (theState != NULL && theState->_lastWordEnd >= 0 && ngram < actionNgram) {
 				feat._strWordFeat.push_back(theState->_strlastWord);
+				feat._strKeyChars.push_back(pCharacters->at(theState->_lastWordEnd));
+				feat._strKeyChars.push_back(pCharacters->at(theState->_lastWordEnd));
+				length = theState->_lastWordEnd - theState->_lastWordStart + 1;
+				if(length > 5) length = 5;
+				feat._nWordLengths.push_back(length);
 				theState = theState->_prevStackState;
 				ngram++;
 			}

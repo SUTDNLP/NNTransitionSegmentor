@@ -1,7 +1,7 @@
 /*
  * FeatureExtraction.h
  *
- *  Created on: Oct 7, 2015
+ *  Created on: Jan 25, 2016
  *      Author: mszhang
  */
 
@@ -23,6 +23,7 @@ public:
 public:
 	Alphabet _featAlphabet;
 	Alphabet _wordAlphabet;
+	Alphabet _allwordAlphabet;
 	Alphabet _charAlphabet;
 	Alphabet _bicharAlphabet;
 	Alphabet _actionAlphabet;
@@ -59,12 +60,14 @@ public:
 		if (alphaIncreasing) {
 			_featAlphabet.set_fixed_flag(false);
 			_wordAlphabet.set_fixed_flag(false);
+			_allwordAlphabet.set_fixed_flag(false);
 			_charAlphabet.set_fixed_flag(false);
 			_bicharAlphabet.set_fixed_flag(false);
 			_actionAlphabet.set_fixed_flag(false);
 		} else {
 			_featAlphabet.set_fixed_flag(true);
 			_wordAlphabet.set_fixed_flag(true);
+			_allwordAlphabet.set_fixed_flag(true);
 			_charAlphabet.set_fixed_flag(true);
 			_bicharAlphabet.set_fixed_flag(true);
 			_actionAlphabet.set_fixed_flag(true);
@@ -118,6 +121,16 @@ public:
 						featId = unknownID;
 					feat._nWordFeat[idx] = featId;
 				}
+				
+				feat._nAllWordFeat.resize(wordNgram);
+				unknownID = _allwordAlphabet[unknownkey];
+				for (int idx = 0; idx < wordNgram; idx++) {
+					featId = idx < feat._strWordFeat.size() ? _allwordAlphabet[feat._strWordFeat[idx]] : _allwordAlphabet[nullkey];
+					if (featId < 0)
+						featId = unknownID;
+					feat._nAllWordFeat[idx] = featId;
+				}
+				
 				feat._strWordFeat.clear();
 			}
 
@@ -153,6 +166,18 @@ public:
 		}
 		_wordAlphabet.set_fixed_flag(true);
 	}
+	
+	
+	void addToAllWordAlphabet(hash_map<string, int> allword_stat, int allwordCutOff = 0) {
+		_allwordAlphabet.set_fixed_flag(false);
+		hash_map<string, int>::iterator allword_iter;
+		for (allword_iter = allword_stat.begin(); allword_iter != allword_stat.end(); allword_iter++) {
+			if (allword_iter->second > allwordCutOff) {
+				_allwordAlphabet.from_string(allword_iter->first);
+			}
+		}
+		_allwordAlphabet.set_fixed_flag(true);
+	}	
 
 	void addToCharAlphabet(hash_map<string, int> char_stat, int charCutOff = 0) {
 		_charAlphabet.set_fixed_flag(false);
@@ -194,6 +219,11 @@ public:
 		_wordAlphabet.from_string(nullkey);
 		_wordAlphabet.from_string(unknownkey);
 		_wordAlphabet.set_fixed_flag(true);
+		
+		_allwordAlphabet.clear();
+		_allwordAlphabet.from_string(nullkey);
+		_allwordAlphabet.from_string(unknownkey);
+		_allwordAlphabet.set_fixed_flag(true);
 
 		_charAlphabet.clear();
 		_charAlphabet.from_string(nullkey);

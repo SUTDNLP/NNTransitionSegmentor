@@ -1,7 +1,7 @@
 /*
  * LinearBeamSearcher.h
  *
- *  Created on: Mar 25, 2015
+ *  Created on: Jan 25, 2016
  *      Author: mszhang
  */
 
@@ -108,14 +108,14 @@ public:
     _eval.reset();
     dtype cost = 0.0;
     for (int idx = 0; idx < sentences.size(); idx++) {
-      cost += trainOneExample(sentences[idx], goldACs[idx]);
+      cost += trainOneExample(sentences[idx], goldACs[idx], sentences.size());
     }
 
     return cost;
   }
 
   // scores do not accumulate together...., big bug, refine it tomorrow or at thursday.
-  dtype trainOneExample(const std::vector<std::string>& sentence, const vector<CAction>& goldAC) {
+  dtype trainOneExample(const std::vector<std::string>& sentence, const vector<CAction>& goldAC, int num) {
     if (sentence.size() >= MAX_SENTENCE_SIZE)
       return 0.0;
     static CStateItem lattice[(MAX_SENTENCE_SIZE + 1) * (BEAM_SIZE + 1)];
@@ -241,7 +241,7 @@ public:
         //TRACE(index << " updated");
         //std::cout << index << " updated" << std::endl;
 
-        cost = backPropagationStates(pBestGen, correctState, 1.0, -1.0);
+        cost = backPropagationStates(pBestGen, correctState, 1.0/num, -1.0/num);
         if (cost < 0) {
           std::cout << "strange ..." << std::endl;
         }
@@ -265,7 +265,7 @@ public:
       //std::cout << "best:" << pBestGen->str() << std::endl;
       //std::cout << "gold:" << correctState->str() << std::endl;
 
-      cost = backPropagationStates(pBestGen, correctState, 1.0, -1.0);
+      cost = backPropagationStates(pBestGen, correctState, 1.0/num, -1.0/num);
       if (cost < 0) {
         std::cout << "strange ..." << std::endl;
       }

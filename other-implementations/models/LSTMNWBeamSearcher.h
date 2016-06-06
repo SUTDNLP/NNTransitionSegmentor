@@ -1,12 +1,12 @@
 /*
- * StackLSTMBeamSearcher.h
+ * LSTMNWBeamSearcher.h
  *
- *  Created on: Mar 25, 2015
+ *  Created on: Jan 25, 2016
  *      Author: mszhang
  */
 
-#ifndef SRC_StackLSTMBeamSearcher_H_
-#define SRC_StackLSTMBeamSearcher_H_
+#ifndef SRC_LSTMBeamSearcher_H_
+#define SRC_LSTMBeamSearcher_H_
 
 #include <hash_set>
 #include <iostream>
@@ -19,6 +19,9 @@
 #include "N3L.h"
 #include "NeuralState.h"
 #include "Action.h"
+#include "SegLookupTable.h"
+
+#define LSTM_ALG LSTM_STD
 
 using namespace nr;
 using namespace std;
@@ -28,36 +31,42 @@ using namespace mshadow::utils;
 
 //re-implementation of Yue and Clark ACL (2007)
 template<typename xpu>
-class StackLSTMBeamSearcher {
+class LSTMNWBeamSearcher {
 public:
-	StackLSTMBeamSearcher() {
+	LSTMNWBeamSearcher() {
 		_dropOut = 0.5;
 		_delta = 0.2;
+		_oovRatio = 0.2;
+		_oovFreq = 3;
+		_buffer = 6;
 	}
-	~StackLSTMBeamSearcher() {
+	~LSTMNWBeamSearcher() {
 	}
 
 public:
-	SparseUniLayer1O<xpu> _splayer_output;
+	//SparseUniLayer1O<xpu> _splayer_output;
 	UniLayer1O<xpu> _nnlayer_sep_output;
 	UniLayer1O<xpu> _nnlayer_app_output;
-	LookupTable<xpu> _words;
+	SegLookupTable<xpu> _words;
+	LookupTable<xpu> _allwords;
 	LookupTable<xpu> _chars;
+	LookupTable<xpu> _keyChars;
 	LookupTable<xpu> _bichars;
 	LookupTable<xpu> _actions;
+	LookupTable<xpu> _lengths;
 
-	RNN<xpu> _char_left_rnn;
-	RNN<xpu> _char_right_rnn;
-	RNN<xpu> _word_increased_rnn;
-	RNN<xpu> _action_increased_rnn;
+	LSTM_ALG<xpu> _char_left_rnn;
+	LSTM_ALG<xpu> _char_right_rnn;
+	LSTM_ALG<xpu> _word_increased_rnn;
+	LSTM_ALG<xpu> _action_increased_rnn;
 	UniLayer<xpu> _nnlayer_sep_hidden;
 	UniLayer<xpu> _nnlayer_app_hidden;
 	UniLayer<xpu> _nnlayer_word_hidden;
 	UniLayer<xpu> _nnlayer_char_hidden;
 	UniLayer<xpu> _nnlayer_action_hidden;
 
-	int _wordSize;
-	int _wordDim;
+	int _wordSize, _allwordSize, _lengthSize;
+	int _wordDim,  _allwordDim, _lengthDim;
 	int _wordNgram;
 	int _wordRepresentDim;
 	int _charSize, _biCharSize;
@@ -90,6 +99,12 @@ public:
 
 	dtype _delta;
 
+	dtype _oovRatio;
+
+	int _oovFreq;
+
+	int _buffer;
+
 	enum {
 		BEAM_SIZE = 16, MAX_SENTENCE_SIZE = 512
 	};
@@ -104,6 +119,10 @@ public:
 		fe.addToWordAlphabet(word_stat, wordCutOff);
 	}
 
+	inline void addToAllWordAlphabet(hash_map<string, int> allword_stat, int allwordCutOff = 0) {
+		fe.addToAllWordAlphabet(allword_stat, allwordCutOff);
+	}
+	
 	inline void addToCharAlphabet(hash_map<string, int> char_stat, int charCutOff = 0) {
 		fe.addToCharAlphabet(char_stat, charCutOff);
 	}
@@ -134,19 +153,15 @@ public:
 
 public:
 
-	inline void init(const NRMat<dtype>& wordEmb, int wordNgram, int wordHiddenSize, int wordRNNHiddenSize, const NRMat<dtype>& actionEmb, int actionNgram,
-			int actionHiddenSize, int actionRNNHiddenSize, const NRMat<dtype>& charEmb, const NRMat<dtype>& bicharEmb, int charcontext, int charHiddenSize,
-			int charRNNHiddenSize, int sep_hidden_out_size, int app_hidden_out_size) {
+	inline void init(const NRMat<dtype>& wordEmb, const NRMat<dtype>& allwordEmb, const NRMat<dtype>& lengthEmb, int wordNgram, int wordHiddenSize, int wordRNNHiddenSize,
+			const NRMat<dtype>& charEmb, const NRMat<dtype>& bicharEmb, int charcontext, int charHiddenSize, int charRNNHiddenSize,
+			const NRMat<dtype>& actionEmb, int actionNgram, int actionHiddenSize, int actionRNNHiddenSize,
+			int sep_hidden_out_size, int app_hidden_out_size, dtype delta) {
+		_delta = delta;
 		_linearfeatSize = 3 * fe._featAlphabet.size();
-		_splayer_output.initial(_linearfeatSize, 10);
+		//_splayer_output.initial(_linearfeatSize, 10);
 
-		_wordSize = fe._wordAlphabet.size();
-		if (_wordSize != wordEmb.nrows())
-			std::cout << "word number does not match for initialization of word emb table" << std::endl;
-		_wordDim = wordEmb.ncols();
-		;
-		_wordNgram = wordNgram;
-		_wordRepresentDim = _wordNgram * _wordDim;
+
 		_charSize = fe._charAlphabet.size();
 		if (_charSize != charEmb.nrows())
 			std::cout << "char number does not match for initialization of char emb table" << std::endl;
@@ -165,6 +180,21 @@ public:
 		_actionNgram = actionNgram;
 		_actionRepresentDim = _actionNgram * _actionDim;
 
+		_wordSize = fe._wordAlphabet.size();
+		if (_wordSize != wordEmb.nrows())
+			std::cout << "word number does not match for initialization of word emb table" << std::endl;
+		_allwordSize = fe._allwordAlphabet.size();
+		if (_allwordSize != allwordEmb.nrows())
+			std::cout << "allword number does not match for initialization of allword emb table" << std::endl;				
+		_wordDim = wordEmb.ncols();
+		_allwordDim = allwordEmb.ncols();
+
+		_lengthSize = lengthEmb.nrows();
+		_lengthDim = lengthEmb.ncols();
+
+		_wordNgram = wordNgram;
+		_wordRepresentDim = _wordNgram * _wordDim +  _wordNgram * _allwordDim + (2 * _wordNgram + 1) * _charDim + _wordNgram * _lengthDim;
+
 		_wordRNNHiddenSize = wordRNNHiddenSize;
 		_charRNNHiddenSize = charRNNHiddenSize;
 		_actionRNNHiddenSize = actionRNNHiddenSize;
@@ -173,21 +203,31 @@ public:
 		_actionHiddenSize = actionHiddenSize;
 		_sep_hiddenOutSize = sep_hidden_out_size;
 		_app_hiddenOutSize = app_hidden_out_size;
-		_sep_hiddenInSize = _wordRNNHiddenSize + actionRNNHiddenSize + 2 * _charRNNHiddenSize;
-		_app_hiddenInSize = actionRNNHiddenSize + 2 * _charRNNHiddenSize;
+		_sep_hiddenInSize = _wordRNNHiddenSize + _actionRNNHiddenSize + 2 * _charRNNHiddenSize;
+		_app_hiddenInSize = _actionRNNHiddenSize + 2 * _charRNNHiddenSize;
 
 		_nnlayer_sep_output.initial(_sep_hiddenOutSize, 10);
 		_nnlayer_app_output.initial(_app_hiddenOutSize, 20);
 
 		_words.initial(wordEmb);
+		_words.setEmbFineTune(true);
+		_allwords.initial(allwordEmb, false);
+		_allwords.setEmbFineTune(false);
 		_chars.initial(charEmb);
+		_chars.setEmbFineTune(false);
+		_keyChars.initial(charEmb);
+		_keyChars.setEmbFineTune(false);
 		_bichars.initial(bicharEmb);
+		_bichars.setEmbFineTune(false);
 		_actions.initial(actionEmb);
+		_actions.setEmbFineTune(true);
+		_lengths.initial(lengthEmb);
+		_lengths.setEmbFineTune(true);
 
 		_char_left_rnn.initial(_charRNNHiddenSize, _charHiddenSize, true, 30);
 		_char_right_rnn.initial(_charRNNHiddenSize, _charHiddenSize, false, 40);
-		_word_increased_rnn.initial(_wordRNNHiddenSize, _wordHiddenSize, false, 50);
-		_action_increased_rnn.initial(_actionRNNHiddenSize, _actionHiddenSize, false, 60);
+		_word_increased_rnn.initial(_wordRNNHiddenSize, _wordHiddenSize, true, 50);
+		_action_increased_rnn.initial(_actionRNNHiddenSize, _actionHiddenSize, true, 60);
 		_nnlayer_sep_hidden.initial(_sep_hiddenOutSize, _sep_hiddenInSize, true, 70, 0);
 		_nnlayer_app_hidden.initial(_app_hiddenOutSize, _app_hiddenInSize, true, 80, 0);
 		_nnlayer_word_hidden.initial(_wordHiddenSize, _wordRepresentDim, true, 90, 0);
@@ -197,15 +237,17 @@ public:
 	}
 
 	inline void release() {
-		_splayer_output.release();
+		//_splayer_output.release();
 
 		_nnlayer_sep_output.release();
 		_nnlayer_app_output.release();
 
 		_words.release();
+		_allwords.release();
 		_chars.release();
 		_bichars.release();
 		_actions.release();
+		_lengths.release();
 
 		_char_left_rnn.release();
 		_char_right_rnn.release();
@@ -226,14 +268,14 @@ public:
 		_eval.reset();
 		dtype cost = 0.0;
 		for (int idx = 0; idx < sentences.size(); idx++) {
-			cost += trainOneExample(sentences[idx], goldACs[idx]);
+			cost += trainOneExample(sentences[idx], goldACs[idx], sentences.size());
 		}
 
 		return cost;
 	}
 
 	// scores do not accumulate together...., big bug, refine it tomorrow or at thursday.
-	dtype trainOneExample(const std::vector<std::string>& sentence, const vector<CAction>& goldAC) {
+	dtype trainOneExample(const std::vector<std::string>& sentence, const vector<CAction>& goldAC, int num) {
 		if (sentence.size() >= MAX_SENTENCE_SIZE)
 			return 0.0;
 		static CStateItem<xpu> lattice[(MAX_SENTENCE_SIZE + 1) * (BEAM_SIZE + 1)];
@@ -268,7 +310,7 @@ public:
 		/*
 		 Add Character bi rnn  here
 		 */
-		charFeat.init(length, _charDim, _biCharDim, _charcontext, _charHiddenSize, _charRNNHiddenSize, true);
+		charFeat.init(length, _charDim, _biCharDim, _charcontext, _charHiddenSize, _charRNNHiddenSize, _buffer, true);
 		int unknownCharID = fe._charAlphabet[fe.unknownkey];
 		for (int idx = 0; idx < length; idx++) {
 			charFeat._charIds[idx] = fe._charAlphabet[sentence[idx]];
@@ -294,8 +336,10 @@ public:
 		windowlized(charFeat._charpre, charFeat._charInput, _charcontext);
 
 		_nnlayer_char_hidden.ComputeForwardScore(charFeat._charInput, charFeat._charHidden);
-		_char_left_rnn.ComputeForwardScore(charFeat._charHidden, charFeat._charLeftRNNHidden);
-		_char_right_rnn.ComputeForwardScore(charFeat._charHidden, charFeat._charRightRNNHidden);
+		_char_left_rnn.ComputeForwardScore(charFeat._charHidden, charFeat._charLeftRNNHiddenBuf[0], charFeat._charLeftRNNHiddenBuf[1], charFeat._charLeftRNNHiddenBuf[2],
+				charFeat._charLeftRNNHiddenBuf[3], charFeat._charLeftRNNHiddenBuf[4], charFeat._charLeftRNNHiddenBuf[5], charFeat._charLeftRNNHidden);
+		_char_right_rnn.ComputeForwardScore(charFeat._charHidden, charFeat._charRightRNNHiddenBuf[0], charFeat._charRightRNNHiddenBuf[1], charFeat._charRightRNNHiddenBuf[2],
+				charFeat._charRightRNNHiddenBuf[3], charFeat._charRightRNNHiddenBuf[4], charFeat._charRightRNNHiddenBuf[5], charFeat._charRightRNNHidden);
 
 		correctState = lattice_index[0];
 
@@ -307,55 +351,94 @@ public:
 			correct_action = goldAC[index - 1];
 			bCorrect = false;
 			correct_action_scored = false;
-
 			//std::cout << "check beam start" << std::endl;
 			for (pGenerator = lattice_index[index - 1]; pGenerator != lattice_index[index]; ++pGenerator) {
 				//std::cout << "new" << std::endl;
 				//std::cout << pGenerator->str() << std::endl;
 				pGenerator->getCandidateActions(actions);
 				for (tmp_j = 0; tmp_j < actions.size(); ++tmp_j) {
+					//scored_action.clear();
 					scored_action.action = actions[tmp_j];
 					scored_action.item = pGenerator;
 					fe.extractFeature(pGenerator, actions[tmp_j], scored_action.feat, _wordNgram, _actionNgram);
-					_splayer_output.ComputeForwardScore(scored_action.feat._nSparseFeat, scored_action.score);
+					//_splayer_output.ComputeForwardScore(scored_action.feat._nSparseFeat, scored_action.score);
+					scored_action.score = 0;
 					scored_action.score += pGenerator->_score;
 
-					scored_action.nnfeat.init(_wordDim, _wordNgram, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize,
-							_actionRNNHiddenSize, _sep_hiddenInSize, _app_hiddenInSize, _sep_hiddenOutSize, _app_hiddenOutSize, true);
+					scored_action.nnfeat.init(_wordDim, _allwordDim, _charDim, _lengthDim, _wordNgram, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize,
+							_actionRNNHiddenSize, _sep_hiddenInSize, _app_hiddenInSize, _sep_hiddenOutSize, _app_hiddenOutSize, _buffer, true);
 
 					//neural
 					//action list
 					for (int tmp_k = 0; tmp_k < _actionNgram; tmp_k++) {
 						_actions.GetEmb(scored_action.feat._nActionFeat[tmp_k], scored_action.nnfeat._actionPrime[tmp_k]);
-						dropoutcol(scored_action.nnfeat._actionPrimeMask[tmp_k], _dropOut);
-						scored_action.nnfeat._actionPrime[tmp_k] = scored_action.nnfeat._actionPrime[tmp_k] * scored_action.nnfeat._actionPrimeMask[tmp_k];
 					}
+
 					concat(scored_action.nnfeat._actionPrime, scored_action.nnfeat._actionRep);
+					dropoutcol(scored_action.nnfeat._actionRepMask, _dropOut);
+					scored_action.nnfeat._actionRep = scored_action.nnfeat._actionRep * scored_action.nnfeat._actionRepMask;
+
 					_nnlayer_action_hidden.ComputeForwardScore(scored_action.nnfeat._actionRep, scored_action.nnfeat._actionHidden);
 
 					if (pGenerator->_nextPosition == 0) {
-						_action_increased_rnn.ComputeForwardScoreIncremental(scored_action.nnfeat._actionHidden, scored_action.nnfeat._actionRNNHidden);
+						_action_increased_rnn.ComputeForwardScoreIncremental(scored_action.nnfeat._actionHidden,
+								scored_action.nnfeat._actionRNNHiddenBuf[0], scored_action.nnfeat._actionRNNHiddenBuf[1], scored_action.nnfeat._actionRNNHiddenBuf[2],
+								scored_action.nnfeat._actionRNNHiddenBuf[3], scored_action.nnfeat._actionRNNHiddenBuf[4], scored_action.nnfeat._actionRNNHiddenBuf[5],
+								scored_action.nnfeat._actionRNNHidden);
 					} else {
-						_action_increased_rnn.ComputeForwardScoreIncremental(pGenerator->_nnfeat._actionRNNHidden, scored_action.nnfeat._actionHidden,
+						_action_increased_rnn.ComputeForwardScoreIncremental(pGenerator->_nnfeat._actionRNNHiddenBuf[4], pGenerator->_nnfeat._actionRNNHidden, scored_action.nnfeat._actionHidden,
+								scored_action.nnfeat._actionRNNHiddenBuf[0], scored_action.nnfeat._actionRNNHiddenBuf[1], scored_action.nnfeat._actionRNNHiddenBuf[2],
+								scored_action.nnfeat._actionRNNHiddenBuf[3], scored_action.nnfeat._actionRNNHiddenBuf[4], scored_action.nnfeat._actionRNNHiddenBuf[5],
 								scored_action.nnfeat._actionRNNHidden);
 					}
 
 					//read word
 					if (scored_action.action._code == CAction::SEP || scored_action.action._code == CAction::FIN) {
 						for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
+							int unknownID = fe._wordAlphabet[fe.unknownkey];
+							int curFreq = _words.getFrequency(scored_action.feat._nWordFeat[tmp_k]);
+							if (curFreq >= 0 && curFreq <= _oovFreq){
+								//if (1.0 * rand() / RAND_MAX < _oovRatio){
+									scored_action.feat._nWordFeat[tmp_k] = unknownID;
+								//}
+							}
 							_words.GetEmb(scored_action.feat._nWordFeat[tmp_k], scored_action.nnfeat._wordPrime[tmp_k]);
-							dropoutcol(scored_action.nnfeat._wordPrimeMask[tmp_k], _dropOut);
-							scored_action.nnfeat._wordPrime[tmp_k] = scored_action.nnfeat._wordPrime[tmp_k] * scored_action.nnfeat._wordPrimeMask[tmp_k];
+							_allwords.GetEmb(scored_action.feat._nAllWordFeat[tmp_k], scored_action.nnfeat._allwordPrime[tmp_k]);
 						}
+
 						concat(scored_action.nnfeat._wordPrime, scored_action.nnfeat._wordRep);
-						_nnlayer_word_hidden.ComputeForwardScore(scored_action.nnfeat._wordRep, scored_action.nnfeat._wordHidden);
-						const CStateItem<xpu> * preSepState = pGenerator->_prevSepState;
-						if (preSepState == 0) {
-							_word_increased_rnn.ComputeForwardScoreIncremental(scored_action.nnfeat._wordHidden, scored_action.nnfeat._wordRNNHidden);
-						} else {
-							_word_increased_rnn.ComputeForwardScoreIncremental(preSepState->_nnfeat._wordRNNHidden, scored_action.nnfeat._wordHidden,
-									scored_action.nnfeat._wordRNNHidden);
+						concat(scored_action.nnfeat._allwordPrime, scored_action.nnfeat._allwordRep);
+
+						for (int tmp_k = 0; tmp_k < 2*_wordNgram+1; tmp_k++) {
+							_keyChars.GetEmb(scored_action.feat._nKeyChars[tmp_k], scored_action.nnfeat._keyCharPrime[tmp_k]);
 						}
+						concat(scored_action.nnfeat._keyCharPrime, scored_action.nnfeat._keyCharRep);
+
+						for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
+							_lengths.GetEmb(scored_action.feat._nWordLengths[tmp_k], scored_action.nnfeat._lengthPrime[tmp_k]);
+						}
+						concat(scored_action.nnfeat._lengthPrime, scored_action.nnfeat._lengthRep);
+
+						concat(scored_action.nnfeat._wordRep, scored_action.nnfeat._allwordRep, scored_action.nnfeat._keyCharRep, scored_action.nnfeat._lengthRep, scored_action.nnfeat._wordUnitRep);
+						dropoutcol(scored_action.nnfeat._wordUnitRepMask, _dropOut);
+						scored_action.nnfeat._wordUnitRep = scored_action.nnfeat._wordUnitRep * scored_action.nnfeat._wordUnitRepMask;
+
+						_nnlayer_word_hidden.ComputeForwardScore(scored_action.nnfeat._wordUnitRep, scored_action.nnfeat._wordHidden);
+
+						const CStateItem<xpu> * preSepState = pGenerator->_prevSepState;
+						/*
+						if (preSepState == 0) {
+							_word_increased_rnn.ComputeForwardScoreIncremental(scored_action.nnfeat._wordHidden,
+									scored_action.nnfeat._wordRNNHiddenBuf[0], scored_action.nnfeat._wordRNNHiddenBuf[1], scored_action.nnfeat._wordRNNHiddenBuf[2],
+									scored_action.nnfeat._wordRNNHiddenBuf[3], scored_action.nnfeat._wordRNNHiddenBuf[4], scored_action.nnfeat._wordRNNHiddenBuf[5],
+									scored_action.nnfeat._wordRNNHidden);
+						} else {
+							_word_increased_rnn.ComputeForwardScoreIncremental(preSepState->_nnfeat._wordRNNHiddenBuf[4], preSepState->_nnfeat._wordRNNHidden, scored_action.nnfeat._wordHidden,
+									scored_action.nnfeat._wordRNNHiddenBuf[0], scored_action.nnfeat._wordRNNHiddenBuf[1], scored_action.nnfeat._wordRNNHiddenBuf[2],
+									scored_action.nnfeat._wordRNNHiddenBuf[3], scored_action.nnfeat._wordRNNHiddenBuf[4], scored_action.nnfeat._wordRNNHiddenBuf[5],
+									scored_action.nnfeat._wordRNNHidden);
+						}*/
+						scored_action.nnfeat._wordRNNHidden = 0.0;
 
 						//
 						if (pGenerator->_nextPosition < length) {
@@ -373,6 +456,7 @@ public:
 						_nnlayer_app_hidden.ComputeForwardScore(scored_action.nnfeat._appInHidden, scored_action.nnfeat._appOutHidden);
 						_nnlayer_app_output.ComputeForwardScore(scored_action.nnfeat._appOutHidden, score);
 					}
+					//std::cout << "score = " << score << std::endl;
 
 					scored_action.score += score;
 					//std::cout << "add start, action = " << actions[tmp_j] << ", cur ac score = " << scored_action.score << ", orgin score = " << pGenerator->_score << std::endl;;
@@ -398,7 +482,6 @@ public:
 
 				}
 			}
-
 			//std::cout << "check beam finish" << std::endl;
 
 			if (beam.elemsize() == 0) {
@@ -416,8 +499,7 @@ public:
 				pGenerator->move(lattice_index[index + 1], beam[tmp_j].action);
 				lattice_index[index + 1]->_score = beam[tmp_j].score;
 				lattice_index[index + 1]->_curFeat.copy(beam[tmp_j].feat);
-
-				//std::cout << tmp_j << ": " << beam[tmp_j].score << std::endl;
+				lattice_index[index + 1]->_nnfeat.copy(beam[tmp_j].nnfeat);
 
 				if (pBestGen == 0 || lattice_index[index + 1]->_score > pBestGen->_score) {
 					pBestGen = lattice_index[index + 1];
@@ -450,15 +532,21 @@ public:
 				assert(correct_action_scored); // scored_correct_act valid
 				//TRACE(index << " updated");
 				//std::cout << index << " updated" << std::endl;
-				pBestGenFeat.init(pBestGen->_wordnum, index, _wordDim, _wordNgram, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize,
-						_actionRNNHiddenSize);
-				pGoldFeat.init(correctState->_wordnum, index, _wordDim, _wordNgram, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize,
-						_actionRNNHiddenSize);
-				backPropagationStates(pBestGen, correctState, 1.0, -1.0, charFeat._charLeftRNNHidden_Loss, charFeat._charRightRNNHidden_Loss, charFeat._charRNNHiddenDummy_Loss, pBestGenFeat,
+				//std::cout << "best score: " << pBestGen->_score << " , gold score: " << correctState->_score << std::endl;
+
+				pBestGenFeat.init(pBestGen->_wordnum, index, _wordDim, _allwordDim, _charDim, _lengthDim, _wordNgram, _wordRepresentDim, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize,
+						_actionRNNHiddenSize, _buffer);
+				pGoldFeat.init(correctState->_wordnum, index, _wordDim, _allwordDim, _charDim, _lengthDim, _wordNgram, _wordRepresentDim, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize,
+						_actionRNNHiddenSize, _buffer);
+				backPropagationStates(pBestGen, correctState, 1.0/num, -1.0/num, charFeat._charLeftRNNHidden_Loss, charFeat._charRightRNNHidden_Loss, charFeat._charRNNHiddenDummy_Loss, pBestGenFeat,
 						pGoldFeat);
 
-				_char_left_rnn.ComputeBackwardLoss(charFeat._charHidden, charFeat._charLeftRNNHidden, charFeat._charLeftRNNHidden_Loss, charFeat._charHidden_Loss);
-				_char_right_rnn.ComputeBackwardLoss(charFeat._charHidden, charFeat._charRightRNNHidden, charFeat._charRightRNNHidden_Loss, charFeat._charHidden_Loss);
+				_char_left_rnn.ComputeBackwardLoss(charFeat._charHidden, charFeat._charLeftRNNHiddenBuf[0], charFeat._charLeftRNNHiddenBuf[1], charFeat._charLeftRNNHiddenBuf[2],
+						charFeat._charLeftRNNHiddenBuf[3], charFeat._charLeftRNNHiddenBuf[4], charFeat._charLeftRNNHiddenBuf[5], charFeat._charLeftRNNHidden,
+						charFeat._charLeftRNNHidden_Loss, charFeat._charHidden_Loss);
+				_char_right_rnn.ComputeBackwardLoss(charFeat._charHidden, charFeat._charRightRNNHiddenBuf[0], charFeat._charRightRNNHiddenBuf[1], charFeat._charRightRNNHiddenBuf[2],
+						charFeat._charRightRNNHiddenBuf[3], charFeat._charRightRNNHiddenBuf[4], charFeat._charRightRNNHiddenBuf[5], charFeat._charRightRNNHidden,
+						charFeat._charRightRNNHidden_Loss, charFeat._charHidden_Loss);
 				_nnlayer_char_hidden.ComputeBackwardLoss(charFeat._charInput, charFeat._charHidden, charFeat._charHidden_Loss, charFeat._charInput_Loss);
 				windowlized_backward(charFeat._charpre_Loss, charFeat._charInput_Loss, _charcontext);
 				charFeat._charpre_Loss = charFeat._charpre_Loss * charFeat._charpreMask;
@@ -492,15 +580,21 @@ public:
 
 			//std::cout << "best:" << pBestGen->str() << std::endl;
 			//std::cout << "gold:" << correctState->str() << std::endl;
-			pBestGenFeat.init(pBestGen->_wordnum, index, _wordDim, _wordNgram, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize, _actionRNNHiddenSize);
-			pGoldFeat.init(correctState->_wordnum, index, _wordDim, _wordNgram, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize, _actionRNNHiddenSize);
-			backPropagationStates(pBestGen, correctState, 1.0, -1.0, charFeat._charLeftRNNHidden_Loss, charFeat._charRightRNNHidden_Loss, charFeat._charRNNHiddenDummy_Loss, pBestGenFeat,
+			//std::cout << index << " updated" << std::endl;
+			//std::cout << "best score: " << pBestGen->_score << " , gold score: " << correctState->_score << std::endl;
+			pBestGenFeat.init(pBestGen->_wordnum, index, _wordDim, _allwordDim, _charDim, _lengthDim, _wordNgram, _wordRepresentDim, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize, _actionRNNHiddenSize, _buffer);
+			pGoldFeat.init(correctState->_wordnum, index, _wordDim, _allwordDim, _charDim, _lengthDim, _wordNgram, _wordRepresentDim, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize, _actionRNNHiddenSize, _buffer);
+			backPropagationStates(pBestGen, correctState, 1.0/num, -1.0/num, charFeat._charLeftRNNHidden_Loss, charFeat._charRightRNNHidden_Loss, charFeat._charRNNHiddenDummy_Loss, pBestGenFeat,
 					pGoldFeat);
 			pBestGenFeat.clear();
 			pGoldFeat.clear();
 
-			_char_left_rnn.ComputeBackwardLoss(charFeat._charHidden, charFeat._charLeftRNNHidden, charFeat._charLeftRNNHidden_Loss, charFeat._charHidden_Loss);
-			_char_right_rnn.ComputeBackwardLoss(charFeat._charHidden, charFeat._charRightRNNHidden, charFeat._charRightRNNHidden_Loss, charFeat._charHidden_Loss);
+			_char_left_rnn.ComputeBackwardLoss(charFeat._charHidden, charFeat._charLeftRNNHiddenBuf[0], charFeat._charLeftRNNHiddenBuf[1], charFeat._charLeftRNNHiddenBuf[2],
+					charFeat._charLeftRNNHiddenBuf[3], charFeat._charLeftRNNHiddenBuf[4], charFeat._charLeftRNNHiddenBuf[5], charFeat._charLeftRNNHidden,
+					charFeat._charLeftRNNHidden_Loss, charFeat._charHidden_Loss);
+			_char_right_rnn.ComputeBackwardLoss(charFeat._charHidden, charFeat._charRightRNNHiddenBuf[0], charFeat._charRightRNNHiddenBuf[1], charFeat._charRightRNNHiddenBuf[2],
+					charFeat._charRightRNNHiddenBuf[3], charFeat._charRightRNNHiddenBuf[4], charFeat._charRightRNNHiddenBuf[5], charFeat._charRightRNNHidden,
+					charFeat._charRightRNNHidden_Loss, charFeat._charHidden_Loss);
 			_nnlayer_char_hidden.ComputeBackwardLoss(charFeat._charInput, charFeat._charHidden, charFeat._charHidden_Loss, charFeat._charInput_Loss);
 			windowlized_backward(charFeat._charpre_Loss, charFeat._charInput_Loss, _charcontext);
 			charFeat._charpre_Loss = charFeat._charpre_Loss * charFeat._charpreMask;
@@ -535,42 +629,100 @@ public:
 
 		if (pPredState->_nextPosition == 0) {
 			//predState
-			_word_increased_rnn.ComputeBackwardLoss(predDenseFeature._wordHidden, predDenseFeature._wordRNNHidden, predDenseFeature._wordRNNHiddenLoss, predDenseFeature._wordHiddenLoss);
-			_nnlayer_word_hidden.ComputeBackwardLoss(predDenseFeature._wordRep, predDenseFeature._wordHidden, predDenseFeature._wordHiddenLoss, predDenseFeature._wordRepLoss);
+			/*
+			_word_increased_rnn.ComputeBackwardLoss(predDenseFeature._wordHidden,
+					predDenseFeature._wordRNNHiddenBuf[0], predDenseFeature._wordRNNHiddenBuf[1], predDenseFeature._wordRNNHiddenBuf[2],
+					predDenseFeature._wordRNNHiddenBuf[3], predDenseFeature._wordRNNHiddenBuf[4], predDenseFeature._wordRNNHiddenBuf[5],
+					predDenseFeature._wordRNNHidden, predDenseFeature._wordRNNHiddenLoss, predDenseFeature._wordHiddenLoss);*/
+			for(int idx = 0; idx < predDenseFeature._wordHiddenLoss.size(); idx++){
+				predDenseFeature._wordHiddenLoss[idx] = 0.0;
+			}			
+					
+			_nnlayer_word_hidden.ComputeBackwardLoss(predDenseFeature._wordUnitRep, predDenseFeature._wordHidden, predDenseFeature._wordHiddenLoss, predDenseFeature._wordUnitRepLoss);
+
 			for(int idx = 0; idx < predDenseFeature._wordRepLoss.size(); idx++){
+				predDenseFeature._wordUnitRepLoss[idx] = predDenseFeature._wordUnitRepLoss[idx] * predDenseFeature._wordUnitRepMask[idx];
+				unconcat(predDenseFeature._wordRepLoss[idx], predDenseFeature._allwordRepLoss[idx], predDenseFeature._keyCharRepLoss[idx], predDenseFeature._lengthRepLoss[idx], predDenseFeature._wordUnitRepLoss[idx]);
 				unconcat(predDenseFeature._wordPrimeLoss[idx], predDenseFeature._wordRepLoss[idx]);
-				predDenseFeature._wordPrimeLoss[idx] = predDenseFeature._wordPrimeLoss[idx] * predDenseFeature._wordPrimeMask[idx];
+
 				for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
 					_words.EmbLoss(predDenseFeature._wordIds[idx][tmp_k], predDenseFeature._wordPrimeLoss[idx][tmp_k]);
 				}
+
+				unconcat(predDenseFeature._keyCharPrimeLoss[idx], predDenseFeature._keyCharRepLoss[idx]);
+				for (int tmp_k = 0; tmp_k < 2 * _wordNgram + 1; tmp_k++) {
+					_keyChars.EmbLoss(predDenseFeature._keyCharIds[idx][tmp_k], predDenseFeature._keyCharPrimeLoss[idx][tmp_k]);
+				}
+
+				unconcat(predDenseFeature._lengthPrimeLoss[idx], predDenseFeature._lengthRepLoss[idx]);
+				for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
+					_lengths.EmbLoss(predDenseFeature._lengthIds[idx][tmp_k], predDenseFeature._lengthPrimeLoss[idx][tmp_k]);
+				}
+
 			}
 
-			_action_increased_rnn.ComputeBackwardLoss(predDenseFeature._actionHidden, predDenseFeature._actionRNNHidden, predDenseFeature._actionRNNHiddenLoss, predDenseFeature._actionHiddenLoss);
+
+			_action_increased_rnn.ComputeBackwardLoss(predDenseFeature._actionHidden,
+					predDenseFeature._actionRNNHiddenBuf[0], predDenseFeature._actionRNNHiddenBuf[1], predDenseFeature._actionRNNHiddenBuf[2],
+					predDenseFeature._actionRNNHiddenBuf[3], predDenseFeature._actionRNNHiddenBuf[4], predDenseFeature._actionRNNHiddenBuf[5],
+					predDenseFeature._actionRNNHidden, predDenseFeature._actionRNNHiddenLoss, predDenseFeature._actionHiddenLoss);
 			_nnlayer_action_hidden.ComputeBackwardLoss(predDenseFeature._actionRep, predDenseFeature._actionHidden, predDenseFeature._actionHiddenLoss, predDenseFeature._actionRepLoss);
+
+
+
 			for(int idx = 0; idx < predDenseFeature._actionRepLoss.size(); idx++){
+				predDenseFeature._actionRepLoss[idx] = predDenseFeature._actionRepLoss[idx] * predDenseFeature._actionRepMask[idx];
+
 				unconcat(predDenseFeature._actionPrimeLoss[idx], predDenseFeature._actionRepLoss[idx]);
-				predDenseFeature._actionPrimeLoss[idx] = predDenseFeature._actionPrimeLoss[idx] * predDenseFeature._actionPrimeMask[idx];
 				for (int tmp_k = 0; tmp_k < _actionNgram; tmp_k++) {
 					_actions.EmbLoss(predDenseFeature._actionIds[idx][tmp_k], predDenseFeature._actionPrimeLoss[idx][tmp_k]);
 				}
 			}
 
 			//goldState
-			_word_increased_rnn.ComputeBackwardLoss(goldDenseFeature._wordHidden, goldDenseFeature._wordRNNHidden, goldDenseFeature._wordRNNHiddenLoss, goldDenseFeature._wordHiddenLoss);
-			_nnlayer_word_hidden.ComputeBackwardLoss(goldDenseFeature._wordRep, goldDenseFeature._wordHidden, goldDenseFeature._wordHiddenLoss, goldDenseFeature._wordRepLoss);
+			/*
+			_word_increased_rnn.ComputeBackwardLoss(goldDenseFeature._wordHidden,
+					goldDenseFeature._wordRNNHiddenBuf[0], goldDenseFeature._wordRNNHiddenBuf[1], goldDenseFeature._wordRNNHiddenBuf[2],
+					goldDenseFeature._wordRNNHiddenBuf[3], goldDenseFeature._wordRNNHiddenBuf[4], goldDenseFeature._wordRNNHiddenBuf[5],
+					goldDenseFeature._wordRNNHidden, goldDenseFeature._wordRNNHiddenLoss, goldDenseFeature._wordHiddenLoss);*/
+			for(int idx = 0; idx < goldDenseFeature._wordHiddenLoss.size(); idx++){
+				goldDenseFeature._wordHiddenLoss[idx] = 0.0;
+			}
+			
+			_nnlayer_word_hidden.ComputeBackwardLoss(goldDenseFeature._wordUnitRep, goldDenseFeature._wordHidden, goldDenseFeature._wordHiddenLoss, goldDenseFeature._wordUnitRepLoss);
+
+
+
 			for(int idx = 0; idx < goldDenseFeature._wordRepLoss.size(); idx++){
+				goldDenseFeature._wordUnitRepLoss[idx] = goldDenseFeature._wordUnitRepLoss[idx] * goldDenseFeature._wordUnitRepMask[idx];
+				unconcat(goldDenseFeature._wordRepLoss[idx], goldDenseFeature._allwordRepLoss[idx], goldDenseFeature._keyCharRepLoss[idx], goldDenseFeature._lengthRepLoss[idx], goldDenseFeature._wordUnitRepLoss[idx]);
+
 				unconcat(goldDenseFeature._wordPrimeLoss[idx], goldDenseFeature._wordRepLoss[idx]);
-				goldDenseFeature._wordPrimeLoss[idx] = goldDenseFeature._wordPrimeLoss[idx] * goldDenseFeature._wordPrimeMask[idx];
 				for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
 					_words.EmbLoss(goldDenseFeature._wordIds[idx][tmp_k], goldDenseFeature._wordPrimeLoss[idx][tmp_k]);
 				}
+
+				unconcat(goldDenseFeature._keyCharPrimeLoss[idx], goldDenseFeature._keyCharRepLoss[idx]);
+				for (int tmp_k = 0; tmp_k < 2 * _wordNgram + 1; tmp_k++) {
+					_keyChars.EmbLoss(goldDenseFeature._keyCharIds[idx][tmp_k], goldDenseFeature._keyCharPrimeLoss[idx][tmp_k]);
+				}
+
+				unconcat(goldDenseFeature._lengthPrimeLoss[idx], goldDenseFeature._lengthRepLoss[idx]);
+				for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
+					_lengths.EmbLoss(goldDenseFeature._lengthIds[idx][tmp_k], goldDenseFeature._lengthPrimeLoss[idx][tmp_k]);
+				}
 			}
 
-			_action_increased_rnn.ComputeBackwardLoss(goldDenseFeature._actionHidden, goldDenseFeature._actionRNNHidden, goldDenseFeature._actionRNNHiddenLoss, goldDenseFeature._actionHiddenLoss);
+			_action_increased_rnn.ComputeBackwardLoss(goldDenseFeature._actionHidden,
+					goldDenseFeature._actionRNNHiddenBuf[0], goldDenseFeature._actionRNNHiddenBuf[1], goldDenseFeature._actionRNNHiddenBuf[2],
+					goldDenseFeature._actionRNNHiddenBuf[3], goldDenseFeature._actionRNNHiddenBuf[4], goldDenseFeature._actionRNNHiddenBuf[5],
+					goldDenseFeature._actionRNNHidden, goldDenseFeature._actionRNNHiddenLoss, goldDenseFeature._actionHiddenLoss);
 			_nnlayer_action_hidden.ComputeBackwardLoss(goldDenseFeature._actionRep, goldDenseFeature._actionHidden, goldDenseFeature._actionHiddenLoss, goldDenseFeature._actionRepLoss);
+
 			for(int idx = 0; idx < goldDenseFeature._actionRepLoss.size(); idx++){
+				goldDenseFeature._actionRepLoss[idx] = goldDenseFeature._actionRepLoss[idx] * goldDenseFeature._actionRepMask[idx];
+
 				unconcat(goldDenseFeature._actionPrimeLoss[idx], goldDenseFeature._actionRepLoss[idx]);
-				goldDenseFeature._actionPrimeLoss[idx] = goldDenseFeature._actionPrimeLoss[idx] * goldDenseFeature._actionPrimeMask[idx];
 				for (int tmp_k = 0; tmp_k < _actionNgram; tmp_k++) {
 					_actions.EmbLoss(goldDenseFeature._actionIds[idx][tmp_k], goldDenseFeature._actionPrimeLoss[idx][tmp_k]);
 				}
@@ -581,8 +733,8 @@ public:
 
 		if (pPredState != pGoldState) {
 			//sparse
-			_splayer_output.ComputeBackwardLoss(pPredState->_curFeat._nSparseFeat, predLoss);
-			_splayer_output.ComputeBackwardLoss(pGoldState->_curFeat._nSparseFeat, goldLoss);
+			//_splayer_output.ComputeBackwardLoss(pPredState->_curFeat._nSparseFeat, predLoss);
+			//_splayer_output.ComputeBackwardLoss(pGoldState->_curFeat._nSparseFeat, goldLoss);
 
 			int length = charLeftRNNHidden_Loss.size(0);
 
@@ -597,7 +749,7 @@ public:
 				word_position = pPredState->_wordnum - 1;
 				if (position < length) {
 					unconcat(predDenseFeature._wordRNNHiddenLoss[word_position], predDenseFeature._actionRNNHiddenLoss[position], charLeftRNNHidden_Loss[position],
-							charLeftRNNHidden_Loss[position], pPredState->_nnfeat._sepInHiddenLoss);
+							charRightRNNHidden_Loss[position], pPredState->_nnfeat._sepInHiddenLoss);
 				} else {
 					unconcat(predDenseFeature._wordRNNHiddenLoss[word_position], predDenseFeature._actionRNNHiddenLoss[position], charRNNHiddenDummy_Loss,
 							charRNNHiddenDummy_Loss, pPredState->_nnfeat._sepInHiddenLoss);
@@ -608,13 +760,8 @@ public:
 				_nnlayer_app_hidden.ComputeBackwardLoss(pPredState->_nnfeat._appInHidden, pPredState->_nnfeat._appOutHidden, pPredState->_nnfeat._appOutHiddenLoss,
 						pPredState->_nnfeat._appInHiddenLoss);
 
-				if (position < length) {
-					unconcat(predDenseFeature._actionRNNHiddenLoss[position], charLeftRNNHidden_Loss[position], charLeftRNNHidden_Loss[position],
+				unconcat(predDenseFeature._actionRNNHiddenLoss[position], charLeftRNNHidden_Loss[position], charRightRNNHidden_Loss[position],
 							pPredState->_nnfeat._appInHiddenLoss);
-				} else {
-					unconcat(predDenseFeature._actionRNNHiddenLoss[position], charRNNHiddenDummy_Loss, charRNNHiddenDummy_Loss, pPredState->_nnfeat._appInHiddenLoss);
-				}
-
 			}
 
 			//goldState
@@ -628,68 +775,107 @@ public:
 				word_position = pGoldState->_wordnum - 1;
 				if (position < length) {
 					unconcat(goldDenseFeature._wordRNNHiddenLoss[word_position], goldDenseFeature._actionRNNHiddenLoss[position], charLeftRNNHidden_Loss[position],
-							charLeftRNNHidden_Loss[position], pGoldState->_nnfeat._sepInHiddenLoss);
+							charRightRNNHidden_Loss[position], pGoldState->_nnfeat._sepInHiddenLoss);
 				} else {
 					unconcat(goldDenseFeature._wordRNNHiddenLoss[word_position], goldDenseFeature._actionRNNHiddenLoss[position], charRNNHiddenDummy_Loss,
 							charRNNHiddenDummy_Loss, pGoldState->_nnfeat._sepInHiddenLoss);
 				}
 
 			} else {
-				_nnlayer_app_output.ComputeBackwardLoss(pGoldState->_nnfeat._appOutHidden, predLoss, pGoldState->_nnfeat._appOutHiddenLoss);
+				_nnlayer_app_output.ComputeBackwardLoss(pGoldState->_nnfeat._appOutHidden, goldLoss, pGoldState->_nnfeat._appOutHiddenLoss);
 				_nnlayer_app_hidden.ComputeBackwardLoss(pGoldState->_nnfeat._appInHidden, pGoldState->_nnfeat._appOutHidden, pGoldState->_nnfeat._appOutHiddenLoss,
 						pGoldState->_nnfeat._appInHiddenLoss);
 
-				if (position < length) {
-					unconcat(goldDenseFeature._actionRNNHiddenLoss[position], charLeftRNNHidden_Loss[position], charLeftRNNHidden_Loss[position],
+				unconcat(goldDenseFeature._actionRNNHiddenLoss[position], charLeftRNNHidden_Loss[position], charRightRNNHidden_Loss[position],
 							pGoldState->_nnfeat._appInHiddenLoss);
-				} else {
-					unconcat(goldDenseFeature._actionRNNHiddenLoss[position], charRNNHiddenDummy_Loss, charRNNHiddenDummy_Loss, pGoldState->_nnfeat._appInHiddenLoss);
-				}
-
 			}
 
 		}
 
 		//predState
+		word_position = pPredState->_wordnum - 1;
 		if (pPredState->_lastAction._code == CAction::SEP || pPredState->_lastAction._code == CAction::FIN) {
-			tcopy(pPredState->_nnfeat._wordPrime, predDenseFeature._wordPrime[word_position]);
-			tcopy(pPredState->_nnfeat._wordPrimeMask, predDenseFeature._wordPrimeMask[word_position]);
-			tcopy(pPredState->_nnfeat._wordRep, predDenseFeature._wordRep[word_position]);
-			tcopy(pPredState->_nnfeat._wordHidden, predDenseFeature._wordHidden[word_position]);
-			tcopy(pPredState->_nnfeat._wordRNNHidden, predDenseFeature._wordRNNHidden[word_position]);
+			Copy(predDenseFeature._wordPrime[word_position], pPredState->_nnfeat._wordPrime);
+			Copy(predDenseFeature._wordRep[word_position], pPredState->_nnfeat._wordRep);
+			Copy(predDenseFeature._allwordPrime[word_position], pPredState->_nnfeat._allwordPrime);
+			Copy(predDenseFeature._allwordRep[word_position], pPredState->_nnfeat._allwordRep);			
+			Copy(predDenseFeature._keyCharPrime[word_position], pPredState->_nnfeat._keyCharPrime);
+			Copy(predDenseFeature._keyCharRep[word_position], pPredState->_nnfeat._keyCharRep);
+			Copy(predDenseFeature._lengthPrime[word_position], pPredState->_nnfeat._lengthPrime);
+			Copy(predDenseFeature._lengthRep[word_position], pPredState->_nnfeat._lengthRep);
+			Copy(predDenseFeature._wordUnitRep[word_position], pPredState->_nnfeat._wordUnitRep);
+			Copy(predDenseFeature._wordHidden[word_position], pPredState->_nnfeat._wordHidden);
+			for(int idk = 0; idk < _buffer; idk++){
+				Copy(predDenseFeature._wordRNNHiddenBuf[idk][word_position], pPredState->_nnfeat._wordRNNHiddenBuf[idk]);
+			}
+			Copy(predDenseFeature._wordRNNHidden[word_position], pPredState->_nnfeat._wordRNNHidden);
+
+
+			Copy(predDenseFeature._wordUnitRepMask[word_position], pPredState->_nnfeat._wordUnitRepMask);
 
 			for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
 				predDenseFeature._wordIds[word_position][tmp_k] = pPredState->_curFeat._nWordFeat[tmp_k];
 			}
+			for (int tmp_k = 0; tmp_k < 2 * _wordNgram + 1; tmp_k++) {
+				predDenseFeature._keyCharIds[word_position][tmp_k] = pPredState->_curFeat._nKeyChars[tmp_k];
+			}
+			for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
+				predDenseFeature._lengthIds[word_position][tmp_k] = pPredState->_curFeat._nWordLengths[tmp_k];
+			}
 		}
 
-		tcopy(pPredState->_nnfeat._actionPrime, predDenseFeature._actionPrime[position]);
-		tcopy(pPredState->_nnfeat._actionPrimeMask, predDenseFeature._actionPrimeMask[position]);
-		tcopy(pPredState->_nnfeat._actionRep, predDenseFeature._actionRep[position]);
-		tcopy(pPredState->_nnfeat._actionHidden, predDenseFeature._actionHidden[position]);
-		tcopy(pPredState->_nnfeat._actionRNNHidden, predDenseFeature._actionRNNHidden[position]);
+		Copy(predDenseFeature._actionPrime[position], pPredState->_nnfeat._actionPrime);
+		Copy(predDenseFeature._actionRep[position], pPredState->_nnfeat._actionRep);
+		Copy(predDenseFeature._actionRepMask[position], pPredState->_nnfeat._actionRepMask);
+		Copy(predDenseFeature._actionHidden[position], pPredState->_nnfeat._actionHidden);
+		for(int idk = 0; idk < _buffer; idk++){
+			Copy(predDenseFeature._actionRNNHiddenBuf[idk][word_position], pPredState->_nnfeat._actionRNNHiddenBuf[idk]);
+		}
+		Copy(predDenseFeature._actionRNNHidden[position], pPredState->_nnfeat._actionRNNHidden);
 		for (int tmp_k = 0; tmp_k < _actionNgram; tmp_k++) {
 			predDenseFeature._actionIds[position][tmp_k] = pPredState->_curFeat._nActionFeat[tmp_k];
 		}
 
 		//goldState
+		word_position = pGoldState->_wordnum - 1;
 		if (pGoldState->_lastAction._code == CAction::SEP || pGoldState->_lastAction._code == CAction::FIN) {
-			tcopy(pGoldState->_nnfeat._wordPrime, goldDenseFeature._wordPrime[word_position]);
-			tcopy(pGoldState->_nnfeat._wordPrimeMask, goldDenseFeature._wordPrimeMask[word_position]);
-			tcopy(pGoldState->_nnfeat._wordRep, goldDenseFeature._wordRep[word_position]);
-			tcopy(pGoldState->_nnfeat._wordHidden, goldDenseFeature._wordHidden[word_position]);
-			tcopy(pGoldState->_nnfeat._wordRNNHidden, goldDenseFeature._wordRNNHidden[word_position]);
+			Copy(goldDenseFeature._wordPrime[word_position], pGoldState->_nnfeat._wordPrime);
+			Copy(goldDenseFeature._wordRep[word_position], pGoldState->_nnfeat._wordRep);
+			Copy(goldDenseFeature._allwordPrime[word_position], pGoldState->_nnfeat._allwordPrime);
+			Copy(goldDenseFeature._allwordRep[word_position], pGoldState->_nnfeat._allwordRep);			
+			Copy(goldDenseFeature._keyCharPrime[word_position], pGoldState->_nnfeat._keyCharPrime);
+			Copy(goldDenseFeature._keyCharRep[word_position], pGoldState->_nnfeat._keyCharRep);
+			Copy(goldDenseFeature._lengthPrime[word_position], pGoldState->_nnfeat._lengthPrime);
+			Copy(goldDenseFeature._lengthRep[word_position], pGoldState->_nnfeat._lengthRep);
+			Copy(goldDenseFeature._wordUnitRep[word_position], pGoldState->_nnfeat._wordUnitRep);
+			Copy(goldDenseFeature._wordHidden[word_position], pGoldState->_nnfeat._wordHidden);
+			for(int idk = 0; idk < _buffer; idk++){
+				Copy(goldDenseFeature._wordRNNHiddenBuf[idk][word_position], pGoldState->_nnfeat._wordRNNHiddenBuf[idk]);
+			}
+			Copy(goldDenseFeature._wordRNNHidden[word_position], pGoldState->_nnfeat._wordRNNHidden);
+
+
+			Copy(goldDenseFeature._wordUnitRepMask[word_position], pGoldState->_nnfeat._wordUnitRepMask);
 
 			for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
 				goldDenseFeature._wordIds[word_position][tmp_k] = pGoldState->_curFeat._nWordFeat[tmp_k];
 			}
+			for (int tmp_k = 0; tmp_k < 2 * _wordNgram + 1; tmp_k++) {
+				goldDenseFeature._keyCharIds[word_position][tmp_k] = pGoldState->_curFeat._nKeyChars[tmp_k];
+			}
+			for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
+				goldDenseFeature._lengthIds[word_position][tmp_k] = pGoldState->_curFeat._nWordLengths[tmp_k];
+			}
 		}
 
-		tcopy(pGoldState->_nnfeat._actionPrime, goldDenseFeature._actionPrime[position]);
-		tcopy(pGoldState->_nnfeat._actionPrimeMask, goldDenseFeature._actionPrimeMask[position]);
-		tcopy(pGoldState->_nnfeat._actionRep, goldDenseFeature._actionRep[position]);
-		tcopy(pGoldState->_nnfeat._actionHidden, goldDenseFeature._actionHidden[position]);
-		tcopy(pGoldState->_nnfeat._actionRNNHidden, goldDenseFeature._actionRNNHidden[position]);
+		Copy(goldDenseFeature._actionPrime[position], pGoldState->_nnfeat._actionPrime);
+		Copy(goldDenseFeature._actionRep[position], pGoldState->_nnfeat._actionRep);
+		Copy(goldDenseFeature._actionRepMask[position], pGoldState->_nnfeat._actionRepMask);
+		Copy(goldDenseFeature._actionHidden[position], pGoldState->_nnfeat._actionHidden);
+		for(int idk = 0; idk < _buffer; idk++){
+			Copy(goldDenseFeature._actionRNNHiddenBuf[idk][word_position], pGoldState->_nnfeat._actionRNNHiddenBuf[idk]);
+		}
+		Copy(goldDenseFeature._actionRNNHidden[position], pGoldState->_nnfeat._actionRNNHidden);
 		for (int tmp_k = 0; tmp_k < _actionNgram; tmp_k++) {
 			goldDenseFeature._actionIds[position][tmp_k] = pGoldState->_curFeat._nActionFeat[tmp_k];
 		}
@@ -731,7 +917,7 @@ public:
 		/*
 		 Add Character bi rnn  here
 		 */
-		charFeat.init(length, _charDim, _biCharDim, _charcontext, _charHiddenSize, _charRNNHiddenSize, true);
+		charFeat.init(length, _charDim, _biCharDim, _charcontext, _charHiddenSize, _charRNNHiddenSize, _buffer);
 		int unknownCharID = fe._charAlphabet[fe.unknownkey];
 		for (int idx = 0; idx < length; idx++) {
 			charFeat._charIds[idx] = fe._charAlphabet[sentence[idx]];
@@ -750,15 +936,15 @@ public:
 			_chars.GetEmb(charFeat._charIds[idx], charFeat._charprime[idx]);
 			_bichars.GetEmb(charFeat._bicharIds[idx], charFeat._bicharprime[idx]);
 			concat(charFeat._charprime[idx], charFeat._bicharprime[idx], charFeat._charpre[idx]);
-			dropoutcol(charFeat._charpreMask[idx], _dropOut);
-			charFeat._charpre[idx] = charFeat._charpre[idx] * charFeat._charpreMask[idx];
 		}
 
 		windowlized(charFeat._charpre, charFeat._charInput, _charcontext);
 
 		_nnlayer_char_hidden.ComputeForwardScore(charFeat._charInput, charFeat._charHidden);
-		_char_left_rnn.ComputeForwardScore(charFeat._charHidden, charFeat._charLeftRNNHidden);
-		_char_right_rnn.ComputeForwardScore(charFeat._charHidden, charFeat._charRightRNNHidden);
+		_char_left_rnn.ComputeForwardScore(charFeat._charHidden, charFeat._charLeftRNNHiddenBuf[0], charFeat._charLeftRNNHiddenBuf[1], charFeat._charLeftRNNHiddenBuf[2],
+				charFeat._charLeftRNNHiddenBuf[3], charFeat._charLeftRNNHiddenBuf[4], charFeat._charLeftRNNHiddenBuf[5], charFeat._charLeftRNNHidden);
+		_char_right_rnn.ComputeForwardScore(charFeat._charHidden, charFeat._charRightRNNHiddenBuf[0], charFeat._charRightRNNHiddenBuf[1], charFeat._charRightRNNHiddenBuf[2],
+				charFeat._charRightRNNHiddenBuf[3], charFeat._charRightRNNHiddenBuf[4], charFeat._charRightRNNHiddenBuf[5], charFeat._charRightRNNHidden);
 
 		while (true) {
 			++index;
@@ -772,43 +958,76 @@ public:
 				//std::cout << pGenerator->str() << std::endl;
 				pGenerator->getCandidateActions(actions);
 				for (tmp_j = 0; tmp_j < actions.size(); ++tmp_j) {
+					//scored_action.clear();
 					scored_action.action = actions[tmp_j];
 					scored_action.item = pGenerator;
 					fe.extractFeature(pGenerator, actions[tmp_j], scored_action.feat, _wordNgram, _actionNgram);
-					_splayer_output.ComputeForwardScore(scored_action.feat._nSparseFeat, scored_action.score);
+					//_splayer_output.ComputeForwardScore(scored_action.feat._nSparseFeat, scored_action.score);
+					scored_action.score = 0;
 					scored_action.score += pGenerator->_score;
 
-					scored_action.nnfeat.init(_wordDim, _wordNgram, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize,
-							_actionRNNHiddenSize, _sep_hiddenInSize, _app_hiddenInSize, _sep_hiddenOutSize, _app_hiddenOutSize, true);
+					scored_action.nnfeat.init(_wordDim, _allwordDim, _charDim, _lengthDim, _wordNgram, _wordHiddenSize, _wordRNNHiddenSize, _actionDim, _actionNgram, _actionHiddenSize,
+							_actionRNNHiddenSize, _sep_hiddenInSize, _app_hiddenInSize, _sep_hiddenOutSize, _app_hiddenOutSize, _buffer);
 
+					//neural
 					//action list
 					for (int tmp_k = 0; tmp_k < _actionNgram; tmp_k++) {
 						_actions.GetEmb(scored_action.feat._nActionFeat[tmp_k], scored_action.nnfeat._actionPrime[tmp_k]);
 					}
+
 					concat(scored_action.nnfeat._actionPrime, scored_action.nnfeat._actionRep);
+
 					_nnlayer_action_hidden.ComputeForwardScore(scored_action.nnfeat._actionRep, scored_action.nnfeat._actionHidden);
 
 					if (pGenerator->_nextPosition == 0) {
-						_action_increased_rnn.ComputeForwardScoreIncremental(scored_action.nnfeat._actionHidden, scored_action.nnfeat._actionRNNHidden);
+						_action_increased_rnn.ComputeForwardScoreIncremental(scored_action.nnfeat._actionHidden,
+								scored_action.nnfeat._actionRNNHiddenBuf[0], scored_action.nnfeat._actionRNNHiddenBuf[1], scored_action.nnfeat._actionRNNHiddenBuf[2],
+								scored_action.nnfeat._actionRNNHiddenBuf[3], scored_action.nnfeat._actionRNNHiddenBuf[4], scored_action.nnfeat._actionRNNHiddenBuf[5],
+								scored_action.nnfeat._actionRNNHidden);
 					} else {
-						_action_increased_rnn.ComputeForwardScoreIncremental(pGenerator->_nnfeat._actionRNNHidden, scored_action.nnfeat._actionHidden,
+						_action_increased_rnn.ComputeForwardScoreIncremental(pGenerator->_nnfeat._actionRNNHiddenBuf[4], pGenerator->_nnfeat._actionRNNHidden, scored_action.nnfeat._actionHidden,
+								scored_action.nnfeat._actionRNNHiddenBuf[0], scored_action.nnfeat._actionRNNHiddenBuf[1], scored_action.nnfeat._actionRNNHiddenBuf[2],
+								scored_action.nnfeat._actionRNNHiddenBuf[3], scored_action.nnfeat._actionRNNHiddenBuf[4], scored_action.nnfeat._actionRNNHiddenBuf[5],
 								scored_action.nnfeat._actionRNNHidden);
 					}
 
 					//read word
 					if (scored_action.action._code == CAction::SEP || scored_action.action._code == CAction::FIN) {
 						for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
-							_words.GetEmb(scored_action.feat._nWordFeat[tmp_k], scored_action.nnfeat._wordPrime[tmp_k]);
+							_words.GetEmb(scored_action.feat._nWordFeat[tmp_k], scored_action.nnfeat._wordPrime[tmp_k], fe._wordAlphabet[fe.unknownkey]);
+							_allwords.GetEmb(scored_action.feat._nAllWordFeat[tmp_k], scored_action.nnfeat._allwordPrime[tmp_k]);
 						}
 						concat(scored_action.nnfeat._wordPrime, scored_action.nnfeat._wordRep);
-						_nnlayer_word_hidden.ComputeForwardScore(scored_action.nnfeat._wordRep, scored_action.nnfeat._wordHidden);
-						const CStateItem<xpu> * preSepState = pGenerator->_prevSepState;
-						if (preSepState == 0) {
-							_word_increased_rnn.ComputeForwardScoreIncremental(scored_action.nnfeat._wordHidden, scored_action.nnfeat._wordRNNHidden);
-						} else {
-							_word_increased_rnn.ComputeForwardScoreIncremental(preSepState->_nnfeat._wordRNNHidden, scored_action.nnfeat._wordHidden,
-									scored_action.nnfeat._wordRNNHidden);
+						concat(scored_action.nnfeat._allwordPrime, scored_action.nnfeat._allwordRep);
+
+						for (int tmp_k = 0; tmp_k < 2*_wordNgram+1; tmp_k++) {
+							_keyChars.GetEmb(scored_action.feat._nKeyChars[tmp_k], scored_action.nnfeat._keyCharPrime[tmp_k]);
 						}
+						concat(scored_action.nnfeat._keyCharPrime, scored_action.nnfeat._keyCharRep);
+
+						for (int tmp_k = 0; tmp_k < _wordNgram; tmp_k++) {
+							_lengths.GetEmb(scored_action.feat._nWordLengths[tmp_k], scored_action.nnfeat._lengthPrime[tmp_k]);
+						}
+						concat(scored_action.nnfeat._lengthPrime, scored_action.nnfeat._lengthRep);
+
+						concat(scored_action.nnfeat._wordRep, scored_action.nnfeat._allwordRep, scored_action.nnfeat._keyCharRep, scored_action.nnfeat._lengthRep, scored_action.nnfeat._wordUnitRep);
+
+						_nnlayer_word_hidden.ComputeForwardScore(scored_action.nnfeat._wordUnitRep, scored_action.nnfeat._wordHidden);
+
+						const CStateItem<xpu> * preSepState = pGenerator->_prevSepState;
+						/*
+						if (preSepState == 0) {
+							_word_increased_rnn.ComputeForwardScoreIncremental(scored_action.nnfeat._wordHidden,
+									scored_action.nnfeat._wordRNNHiddenBuf[0], scored_action.nnfeat._wordRNNHiddenBuf[1], scored_action.nnfeat._wordRNNHiddenBuf[2],
+									scored_action.nnfeat._wordRNNHiddenBuf[3], scored_action.nnfeat._wordRNNHiddenBuf[4], scored_action.nnfeat._wordRNNHiddenBuf[5],
+									scored_action.nnfeat._wordRNNHidden);
+						} else {
+							_word_increased_rnn.ComputeForwardScoreIncremental(preSepState->_nnfeat._wordRNNHiddenBuf[4], preSepState->_nnfeat._wordRNNHidden, scored_action.nnfeat._wordHidden,
+									scored_action.nnfeat._wordRNNHiddenBuf[0], scored_action.nnfeat._wordRNNHiddenBuf[1], scored_action.nnfeat._wordRNNHiddenBuf[2],
+									scored_action.nnfeat._wordRNNHiddenBuf[3], scored_action.nnfeat._wordRNNHiddenBuf[4], scored_action.nnfeat._wordRNNHiddenBuf[5],
+									scored_action.nnfeat._wordRNNHidden);
+						}*/
+						scored_action.nnfeat._wordRNNHidden = 0.0;
 
 						//
 						if (pGenerator->_nextPosition < length) {
@@ -826,6 +1045,8 @@ public:
 						_nnlayer_app_hidden.ComputeForwardScore(scored_action.nnfeat._appInHidden, scored_action.nnfeat._appOutHidden);
 						_nnlayer_app_output.ComputeForwardScore(scored_action.nnfeat._appOutHidden, score);
 					}
+
+					//std::cout << "score = " << score << std::endl;
 
 					scored_action.score += score;
 
@@ -847,6 +1068,7 @@ public:
 				pGenerator = beam[tmp_j].item;
 				pGenerator->move(lattice_index[index + 1], beam[tmp_j].action);
 				lattice_index[index + 1]->_score = beam[tmp_j].score;
+				lattice_index[index + 1]->_nnfeat.copy(beam[tmp_j].nnfeat);
 
 				if (pBestGen == 0 || lattice_index[index + 1]->_score > pBestGen->_score) {
 					pBestGen = lattice_index[index + 1];
@@ -866,13 +1088,59 @@ public:
 		return true;
 	}
 
-	void updateParams(dtype nnRegular, dtype adaAlpha, dtype adaEps) {
-		_splayer_output.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+	void updateParams(dtype nnRegular, dtype adaAlpha, dtype adaEps, dtype clip = -1.0) {
+		if(clip > 0.0) {
+			dtype norm = 0.0;
+			//norm += _splayer_output.squarenormAll();
+			norm += _nnlayer_sep_output.squarenormAll();
+			norm += _nnlayer_app_output.squarenormAll();
+			norm += _words.squarenormAll();
+			norm += _lengths.squarenormAll();
+			norm += _keyChars.squarenormAll();
+			norm += _chars.squarenormAll();
+			norm += _bichars.squarenormAll();
+			norm += _actions.squarenormAll();
+			norm += _char_left_rnn.squarenormAll();
+			norm += _char_right_rnn.squarenormAll();
+			norm += _word_increased_rnn.squarenormAll();
+			norm += _action_increased_rnn.squarenormAll();
+			norm += _nnlayer_sep_hidden.squarenormAll();
+			norm += _nnlayer_app_hidden.squarenormAll();
+			norm += _nnlayer_word_hidden.squarenormAll();
+			norm += _nnlayer_char_hidden.squarenormAll();
+			norm += _nnlayer_action_hidden.squarenormAll();
+			
+			if(norm > clip * clip){
+				dtype scale = clip/sqrt(norm);
+				//_splayer_output.scaleGrad(scale);
+				_nnlayer_sep_output.scaleGrad(scale);
+				_nnlayer_app_output.scaleGrad(scale);
+				_words.scaleGrad(scale);
+				_lengths.scaleGrad(scale);
+				_keyChars.scaleGrad(scale);
+				_chars.scaleGrad(scale);
+				_bichars.scaleGrad(scale);
+				_actions.scaleGrad(scale);
+				_char_left_rnn.scaleGrad(scale);
+				_char_right_rnn.scaleGrad(scale);
+				_word_increased_rnn.scaleGrad(scale);
+				_action_increased_rnn.scaleGrad(scale);
+				_nnlayer_sep_hidden.scaleGrad(scale);
+				_nnlayer_app_hidden.scaleGrad(scale);
+				_nnlayer_word_hidden.scaleGrad(scale);
+				_nnlayer_char_hidden.scaleGrad(scale);
+				_nnlayer_action_hidden.scaleGrad(scale);
+			}
+		}
+		
+		//_splayer_output.updateAdaGrad(nnRegular, adaAlpha, adaEps);
 
 		_nnlayer_sep_output.updateAdaGrad(nnRegular, adaAlpha, adaEps);
 		_nnlayer_app_output.updateAdaGrad(nnRegular, adaAlpha, adaEps);
 
 		_words.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_lengths.updateAdaGrad(nnRegular, adaAlpha, adaEps);
+		_keyChars.updateAdaGrad(nnRegular, adaAlpha, adaEps);
 		_chars.updateAdaGrad(nnRegular, adaAlpha, adaEps);
 		_bichars.updateAdaGrad(nnRegular, adaAlpha, adaEps);
 		_actions.updateAdaGrad(nnRegular, adaAlpha, adaEps);
@@ -902,18 +1170,23 @@ public:
 		_dropOut = dropOut;
 	}
 
-	inline void setWordEmbFinetune(bool b_wordEmb_finetune) {
-		_words.setEmbFineTune(b_wordEmb_finetune);
+	inline void setOOVRatio(dtype oovRatio) {
+		_oovRatio = oovRatio;
 	}
 
-	inline void setCharEmbFinetune(bool b_charEmb_finetune) {
-		_chars.setEmbFineTune(b_charEmb_finetune);
+	inline void setOOVFreq(dtype oovFreq) {
+		_oovFreq = oovFreq;
 	}
 
-	inline void setBiCharEmbFinetune(bool b_bicharEmb_finetune) {
-		_bichars.setEmbFineTune(b_bicharEmb_finetune);
+	inline void setWordFreq(hash_map<string, int> word_stat){
+		hash_map<int, int> wordFreq;
+		hash_map<string, int>::iterator word_iter;
+		for (word_iter = word_stat.begin(); word_iter != word_stat.end(); word_iter++) {
+			wordFreq[fe._wordAlphabet.from_string(word_iter->first)] = word_iter->second;
+		}
+		_words.setFrequency(wordFreq);
 	}
 
 };
 
-#endif /* SRC_StackLSTMBeamSearcher_H_ */
+#endif /* SRC_LSTMBeamSearcher_H_ */

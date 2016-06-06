@@ -10,7 +10,7 @@
 
 #include "N3L.h"
 
-#include "LinearBeamSearcher.h"
+#include "APBeamSearcher.h"
 #include "Options.h"
 #include "Pipe.h"
 #include "Utf.h"
@@ -34,9 +34,9 @@ public:
 public:
 
 #if USE_CUDA==1
-  LinearBeamSearcher<gpu> m_classifier;
+  APBeamSearcher<gpu> m_classifier;
 #else
-  LinearBeamSearcher<cpu> m_classifier;
+  APBeamSearcher<cpu> m_classifier;
 #endif
 
   Options m_options;

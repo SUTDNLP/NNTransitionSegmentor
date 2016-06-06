@@ -1,7 +1,7 @@
 /*
  * DenseFeatureChar.h
  *
- *  Created on: Dec 11, 2015
+ *  Created on: Jan 25, 2016
  *      Author: mason
  */
 
@@ -18,6 +18,7 @@ public:
 	Tensor<xpu, 3, dtype> _charprime, _bicharprime;
 	Tensor<xpu, 3, dtype> _charpre, _charpreMask;
 	Tensor<xpu, 3, dtype> _charInput, _charHidden;
+	vector<Tensor<xpu, 3, dtype> > _charLeftRNNHiddenBuf, _charRightRNNHiddenBuf;
 	Tensor<xpu, 3, dtype> _charLeftRNNHidden, _charRightRNNHidden;
 	Tensor<xpu, 2, dtype> _charRNNHiddenDummy;
 
@@ -28,11 +29,13 @@ public:
 
 	bool _bTrain;
 	int _charnum;
+	int _buffer;
 
 public:
 	DenseFeatureChar() {
 		_bTrain = false;
 		_charnum = 0;
+		_buffer = 0;
 	}
 
 	~DenseFeatureChar() {
@@ -40,11 +43,12 @@ public:
 	}
 
 public:
-	inline void init(int charnum, int charDim, int bicharDim, int charcontext, int charHiddenDim, int charRNNHiddenDim, bool bTrain = false) {
+	inline void init(int charnum, int charDim, int bicharDim, int charcontext, int charHiddenDim, int charRNNHiddenDim, int buffer = 0, bool bTrain = false) {
 		clear();
 
 		_charnum = charnum;
 		_bTrain = bTrain;
+		_buffer = buffer;
 
 		if (_charnum > 0) {
 			int charwindow = 2 * charcontext + 1;
@@ -57,6 +61,14 @@ public:
 			_charpre = NewTensor<xpu>(Shape3(_charnum, 1, charDim + bicharDim), d_zero);
 			_charInput = NewTensor<xpu>(Shape3(_charnum, 1, charRepresentDim), d_zero);
 			_charHidden = NewTensor<xpu>(Shape3(_charnum, 1, charHiddenDim), d_zero);
+			if (_buffer > 0) {
+				_charLeftRNNHiddenBuf.resize(_buffer);
+				_charRightRNNHiddenBuf.resize(_buffer);
+				for (int idk = 0; idk < _buffer; idk++) {
+					_charLeftRNNHiddenBuf[idk] = NewTensor<xpu>(Shape3(_charnum, 1, charRNNHiddenDim), d_zero);
+					_charRightRNNHiddenBuf[idk] = NewTensor<xpu>(Shape3(_charnum, 1, charRNNHiddenDim), d_zero);
+				}
+			}
 			_charLeftRNNHidden = NewTensor<xpu>(Shape3(_charnum, 1, charRNNHiddenDim), d_zero);
 			_charRightRNNHidden = NewTensor<xpu>(Shape3(_charnum, 1, charRNNHiddenDim), d_zero);
 			_charRNNHiddenDummy = NewTensor<xpu>(Shape2(1, charRNNHiddenDim), d_zero);
@@ -86,6 +98,14 @@ public:
 			FreeSpace(&_charpre);
 			FreeSpace(&_charInput);
 			FreeSpace(&_charHidden);
+			if (_buffer > 0) {
+				for (int idk = 0; idk < _buffer; idk++) {
+					FreeSpace(&(_charLeftRNNHiddenBuf[idk]));
+					FreeSpace(&(_charRightRNNHiddenBuf[idk]));
+				}
+				_charLeftRNNHiddenBuf.clear();
+				_charRightRNNHiddenBuf.clear();
+			}
 			FreeSpace(&_charLeftRNNHidden);
 			FreeSpace(&_charRightRNNHidden);
 			FreeSpace(&_charRNNHiddenDummy);
@@ -106,6 +126,7 @@ public:
 
 		_bTrain = false;
 		_charnum = 0;
+		_buffer = 0;
 	}
 
 };

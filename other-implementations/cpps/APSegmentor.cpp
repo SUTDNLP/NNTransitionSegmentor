@@ -5,7 +5,7 @@
  *      Author: mszhang
  */
 
-#include "LinearSegmentor.h"
+#include "APSegmentor.h"
 
 #include "Argument_helper.h"
 

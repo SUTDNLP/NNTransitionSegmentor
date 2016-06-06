@@ -1,7 +1,7 @@
 /*
  * Segmentor.h
  *
- *  Created on: Mar 25, 2015
+ *  Created on: Jan 25, 2016
  *      Author: mszhang
  */
 
@@ -10,7 +10,7 @@
 
 #include "N3L.h"
 
-#include "StackLSTMBeamSearcher.h"
+#include "model/IntegratedLSTMBeamSearcher.h"
 #include "Options.h"
 #include "Pipe.h"
 #include "Utf.h"
@@ -33,14 +33,16 @@ public:
 public:
 
 #if USE_CUDA==1
-	StackLSTMBeamSearcher<gpu> m_classifier;
+	IntegratedLSTMBeamSearcher<gpu> m_classifier;
 #else
-	StackLSTMBeamSearcher<cpu> m_classifier;
+	IntegratedLSTMBeamSearcher<cpu> m_classifier;
 #endif
 
 	Options m_options;
 
 	Pipe m_pipe;
+
+	hash_map<string, int> m_word_stat;
 
 public:
 	void readWordEmbeddings(const string& inFile, NRMat<dtype>& wordEmb);
@@ -50,6 +52,8 @@ public:
 	int createAlphabet(const vector<Instance>& vecInsts);
 
 	int addTestWordAlpha(const vector<Instance>& vecInsts);
+	
+	int allWordAlphaEmb(const string& inFile, NRMat<dtype>& emb);
 
 public:
 	void train(const string& trainFile, const string& devFile, const string& testFile, const string& modelFile, const string& optionFile,

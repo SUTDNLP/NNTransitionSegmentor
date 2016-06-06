@@ -186,7 +186,7 @@ public:
     words.clear();
     words.insert(words.begin(), _strlastWord);
     const CStateItem *prevStackState = _prevStackState;
-    while (prevStackState != 0 && prevStackState->_wordnum >= 0) {
+    while (prevStackState != 0 && prevStackState->_wordnum > 0) {
       words.insert(words.begin(), prevStackState->_strlastWord);
       prevStackState = prevStackState->_prevStackState;
     }
@@ -205,7 +205,7 @@ public:
 
     if (_nextPosition > 0 && _nextPosition < _characterSize) {
       // should have a check here to see whether the words are match, but I did not do it here
-      if (_strlastWord.length() == segments[_wordnum].length()) {
+      if (_strlastWord.length() == segments[_wordnum-1].length()) {
         ac.set(CAction::SEP);
         return;
       } else {

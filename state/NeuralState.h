@@ -135,7 +135,7 @@ public:
     next->_lastWordStart = _nextPosition;
     next->_lastWordEnd = _nextPosition;
     next->_prevStackState = this;
-    next->_prevSepState = (_lastAction._code == CAction::SEP) ? this : this->_prevSepState;
+    next->_prevSepState = next;
     next->_prevState = this;
     next->_nextPosition = _nextPosition + 1;
     next->_pCharacters = _pCharacters;
@@ -154,7 +154,7 @@ public:
     next->_lastWordStart = _lastWordStart;
     next->_lastWordEnd = _lastWordEnd;
     next->_prevStackState = _prevStackState;
-    next->_prevSepState = (_lastAction._code == CAction::SEP) ? this : this->_prevSepState;
+    next->_prevSepState = next;
     next->_prevState = this;
     next->_nextPosition = _nextPosition + 1;
     next->_pCharacters = _pCharacters;
@@ -173,7 +173,7 @@ public:
     next->_lastWordStart = _lastWordStart;
     next->_lastWordEnd = _nextPosition;
     next->_prevStackState = _prevStackState;
-    next->_prevSepState = (_lastAction._code == CAction::SEP) ? this : this->_prevSepState;
+    next->_prevSepState = _prevSepState;
     next->_prevState = this;
     next->_nextPosition = _nextPosition + 1;
     next->_pCharacters = _pCharacters;
@@ -205,7 +205,7 @@ public:
     words.clear();
     words.insert(words.begin(), _strlastWord);
     const CStateItem *prevStackState = _prevStackState;
-    while (prevStackState != 0 && prevStackState->_wordnum >= 0) {
+    while (prevStackState != 0 && prevStackState->_wordnum > 0) {
       words.insert(words.begin(), prevStackState->_strlastWord);
       prevStackState = prevStackState->_prevStackState;
     }
@@ -224,7 +224,7 @@ public:
 
     if (_nextPosition > 0 && _nextPosition < _characterSize) {
       // should have a check here to see whether the words are match, but I did not do it here
-      if (_strlastWord.length() == segments[_wordnum].length()) {
+      if (_strlastWord.length() == segments[_wordnum-1].length()) {
         ac.set(CAction::SEP);
         return;
       } else {
@@ -302,11 +302,43 @@ public:
 
 public:
   CScoredStateAction() :
-      item(0), action(-1), score(0) {
+      item(0), action(0), score(0) {
     feat.setFeatureFormat(false);
     feat.clear();
     nnfeat.clear();
   }
+
+  /*
+  ~CScoredStateAction(){
+  	clear();
+  }
+  */
+
+public:
+  /*
+  inline void clear(){
+  	item = 0;
+  	action = 0;
+  	score = 0;
+    feat.setFeatureFormat(false);
+    feat.clear();
+    nnfeat.clear();
+  }
+  */
+
+	inline CScoredStateAction<xpu>& operator=(const CScoredStateAction<xpu> &rhs) {
+		// Check for self-assignment!
+		if (this == &rhs)      // Same object?
+			return *this;        // Yes, so skip assignment, and just return *this.
+
+		item = rhs.item;
+		action.set(rhs.action._code);
+		score = rhs.score;
+		feat.copy(rhs.feat);
+		nnfeat.copy(rhs.nnfeat);
+
+		return *this;
+	}
 
 
 public:
