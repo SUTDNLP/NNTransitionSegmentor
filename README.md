@@ -22,3 +22,9 @@ Input data format
 ======
 one line one sentence, with words seperated by spaces  
 
+Notice
+======
+* one can remove the length and keyChar embeddings in my implementation to reproduce the results of my ACL paper,
+because the two kinds of embeddings induce little influences in the final performances, but later experiments I found that this can be more stable.  
+* I will make the code more readable in the future. However if someone is interested in this framework, please concat me without hesitatation. 
+
